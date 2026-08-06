@@ -38,3 +38,12 @@ test("implements the truth, compliance, version and asset contracts", async () =
     assert.match(domain, new RegExp(`interface ${contract}|type ${contract}`));
   }
 });
+
+test("exports a real ZIP delivery package", async () => {
+  const route = await readFile(new URL("../app/api/projects/[id]/export/route.ts", import.meta.url), "utf8");
+  assert.match(route, /zipSync/);
+  assert.match(route, /application\/zip/);
+  assert.match(route, /all-channels\.csv/);
+  assert.match(route, /product-page\.html/);
+  assert.match(route, /rule-sources\.json/);
+});
