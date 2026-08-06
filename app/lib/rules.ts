@@ -1,0 +1,27 @@
+import type { ChannelProfile, ComplianceRule, RuleSource } from "./domain";
+
+export const channelProfiles: ChannelProfile[] = [
+  { id: "amazon-us", name: "Amazon US", market: "US", language: "en-US", imageRequirements: { minWidth: 1000, minHeight: 1000, mainBackground: "#FFFFFF", maxImages: 9 }, listingLimits: { titleMin: 50, titleMax: 200, bulletMax: 5 } },
+  { id: "tiktok-us", name: "TikTok Shop US", market: "US", language: "en-US", imageRequirements: { minWidth: 600, minHeight: 600, mainBackground: "#FFFFFF", maxImages: 9 }, listingLimits: { titleMin: 25, titleMax: 200 } },
+  { id: "shopify-us", name: "Shopify US", market: "US", language: "en-US", imageRequirements: { minWidth: 800, minHeight: 800, mainBackground: "flexible", maxImages: 250 }, listingLimits: { titleMin: 20, titleMax: 255 } },
+];
+
+export const ruleSources: RuleSource[] = [
+  { id: "ftc-truth", authority: "FTC", title: "Advertising and Marketing Basics", url: "https://www.ftc.gov/business-guidance/advertising-marketing", jurisdiction: "United States", categories: ["*"], version: "2026-08", fetchedAt: "2026-08-06", excerpt: "Advertising claims must be truthful, not misleading, and supported by evidence.", contentHash: "sha256:ftc-truth-202608" },
+  { id: "ftc-health", authority: "FTC", title: "Health Products Compliance Guidance", url: "https://www.ftc.gov/business-guidance/resources/health-products-compliance-guidance", jurisdiction: "United States", categories: ["beauty", "food", "supplement", "health"], version: "2022-12", fetchedAt: "2026-08-06", excerpt: "Health-related benefit and safety claims require appropriate substantiation.", contentHash: "sha256:ftc-health-202212" },
+  { id: "fda-cosmetics", authority: "FDA", title: "Cosmetics Labeling Claims", url: "https://www.fda.gov/cosmetics/cosmetics-labeling/cosmetics-labeling-claims", jurisdiction: "United States", categories: ["beauty", "cosmetics", "personal-care"], version: "2024-08", fetchedAt: "2026-08-06", excerpt: "Cosmetic claims must be truthful and must not imply unapproved drug treatment.", contentHash: "sha256:fda-cosmetics-202408" },
+  { id: "cpsc-sellers", authority: "CPSC", title: "Online Sellers’ Safety Guide", url: "https://www.cpsc.gov/Business--Manufacturing/Online-Sellers-Safety-Guide", jurisdiction: "United States", categories: ["consumer-goods", "children", "appliance", "electronics"], version: "2026-07", fetchedAt: "2026-08-06", excerpt: "Regulated consumer products may require testing and certification evidence.", contentHash: "sha256:cpsc-sellers-202607" },
+  { id: "amazon-images", authority: "Amazon", title: "Product Image Requirements", url: "https://sellercentral.amazon.com/help/hub/reference/G1881", jurisdiction: "United States", platform: "amazon-us", categories: ["*"], version: "2026-08", fetchedAt: "2026-08-06", excerpt: "Main images use a pure white background and cannot contain promotional text or watermarks.", contentHash: "sha256:amazon-images-202608" },
+  { id: "tiktok-listing", authority: "TikTok Shop", title: "Product Listing Policy", url: "https://seller-us.tiktok.com/university/essay?knowledge_id=3196690250417921", jurisdiction: "United States", platform: "tiktok-us", categories: ["*"], version: "2026-05", fetchedAt: "2026-08-06", excerpt: "Images must accurately represent the product and listings must avoid misleading claims.", contentHash: "sha256:tiktok-listing-202605" },
+  { id: "shopify-media", authority: "Shopify", title: "Product media guidance", url: "https://help.shopify.com/en/manual/products/product-media", jurisdiction: "United States", platform: "shopify-us", categories: ["*"], version: "2026-08", fetchedAt: "2026-08-06", excerpt: "Product media should be accessible, accurate, and optimized for storefront delivery.", contentHash: "sha256:shopify-media-202608" },
+];
+
+export const complianceRules: ComplianceRule[] = [
+  { id: "claim-absolute", sourceId: "ftc-truth", scope: "advertising", target: "all", severity: "high", categories: ["*"], channels: ["amazon-us", "tiktok-us", "shopify-us"], pattern: "\\b(100%|guaranteed|number\\s*1|no\\.?\\s*1|best|perfect|cure|risk[- ]free)\\b", message: "发现可能缺少充分证据的绝对化或排名宣称", suggestion: "改为可验证的产品结构、条件或测试结果描述。" },
+  { id: "fact-duration", sourceId: "ftc-truth", scope: "facts", target: "all", severity: "medium", categories: ["*"], channels: ["amazon-us", "tiktok-us", "shopify-us"], pattern: "\\b(up to|lasts?|per charge|hours?|minutes?)\\b", message: "发现需要商品事实或测试材料支持的量化宣称", suggestion: "关联确认事实或删除未经确认的数字。" },
+  { id: "health-treatment", sourceId: "fda-cosmetics", scope: "category", target: "all", severity: "high", categories: ["beauty", "cosmetics", "personal-care"], channels: ["amazon-us", "tiktok-us", "shopify-us"], pattern: "\\b(treat|heal|cure|repair disease|anti-inflammatory|medical grade)\\b", message: "美妆文案可能构成药品治疗或身体功能宣称", suggestion: "改为外观、清洁或保湿等化妆品用途表达，并核验证据。" },
+  { id: "amazon-main-promo", sourceId: "amazon-images", scope: "platform", target: "image", severity: "high", categories: ["*"], channels: ["amazon-us"], message: "Amazon 主图不得包含促销文字、水印或非随售道具", suggestion: "使用纯白背景，仅保留实际销售商品。" },
+  { id: "tiktok-title-clickbait", sourceId: "tiktok-listing", scope: "platform", target: "title", severity: "medium", categories: ["*"], channels: ["tiktok-us"], pattern: "\\b(best seller|buy now|low stock|free gift)\\b", message: "TikTok Shop 标题包含点击诱导或促销表达", suggestion: "保留准确的品类、属性、规格和使用场景。" },
+];
+
+export function sourceFor(id: string) { return ruleSources.find((source) => source.id === id); }

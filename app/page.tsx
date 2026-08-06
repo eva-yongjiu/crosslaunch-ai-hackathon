@@ -1,5 +1,5 @@
-import { LaunchStudio } from "./components/launch-studio";
+import { V2Studio } from "./components/v2/studio";
 
 export default function Home() {
-  return <LaunchStudio />;
+  return <V2Studio />;
 }

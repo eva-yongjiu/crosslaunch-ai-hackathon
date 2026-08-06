@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "上新无界 CrossLaunch AI",
-  description: "跨境商品智能上新与合规本地化引擎",
+  title: "上新无界 V2 · CrossLaunch AI",
+  description: "跨境商品事实、内容生成、视觉本地化与合规证据链工作台",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
