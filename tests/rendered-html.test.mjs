@@ -11,13 +11,13 @@ async function render(path = "/") {
   }, { waitUntil() {}, passThroughOnException() {} });
 }
 
-test("server-renders the V2 launch workspace", async () => {
+test("server-renders the focused launch workspace", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /上新无界/);
   assert.match(html, /商品事实/);
-  assert.match(html, /Fixture/);
+  assert.match(html, /演示模式/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 
