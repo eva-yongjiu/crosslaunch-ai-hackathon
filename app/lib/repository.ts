@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, ne } from "drizzle-orm";
 import { getDb } from "../../db";
 import { projectVersions, projects, workspaces } from "../../db/schema";
 import type { LaunchProject, ProjectWorkspace } from "./domain";
@@ -19,10 +19,11 @@ function hydrate(project: typeof projects.$inferSelect, workspace: typeof worksp
 }
 
 export async function listProjects() {
-  return getDb().select().from(projects).orderBy(desc(projects.updatedAt));
+  return getDb().select().from(projects).where(ne(projects.id, "project_demo")).orderBy(desc(projects.updatedAt));
 }
 
 export async function getWorkspace(projectId: string) {
+  if (projectId === "project_demo") return null;
   const db = getDb();
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
   const [workspace] = await db.select().from(workspaces).where(eq(workspaces.projectId, projectId));

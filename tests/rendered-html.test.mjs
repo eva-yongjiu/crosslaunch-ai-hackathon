@@ -51,6 +51,8 @@ test("does not silently fall back to fixture data", async () => {
   ]);
   assert.doesNotMatch(files.join("\n"), /cloneFixture|fixture:\/\/|storage:\s*["']fixture/);
   await assert.rejects(readFile(new URL("../app/lib/fixtures.ts", import.meta.url), "utf8"));
+  const repository = await readFile(new URL("../app/lib/repository.ts", import.meta.url), "utf8");
+  assert.match(repository, /ne\(projects\.id, "project_demo"\)/);
 });
 
 test("exports a real ZIP delivery package", async () => {
