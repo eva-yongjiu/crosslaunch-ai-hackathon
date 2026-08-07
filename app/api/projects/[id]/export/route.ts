@@ -1,4 +1,3 @@
-import { cloneFixture } from "../../../../lib/fixtures";
 import { strToU8, zipSync } from "fflate";
 
 const jsonFile = (value: unknown) => strToU8(JSON.stringify(value, null, 2));
@@ -7,8 +6,12 @@ const csvCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   let workspace;
-  try { const { getWorkspace } = await import("../../../../lib/repository"); workspace = await getWorkspace(id); } catch { workspace = null; }
-  workspace ??= cloneFixture();
+  try { const { getWorkspace } = await import("../../../../lib/repository"); workspace = await getWorkspace(id); }
+  catch { return Response.json({ error: "项目数据库暂不可用。" }, { status: 503 }); }
+  if (!workspace) return Response.json({ error: "项目不存在。" }, { status: 404 });
+  if (!workspace.truth.confirmedAt || workspace.listings.some((listing) => !listing.title.trim())) {
+    return Response.json({ error: "事实档案尚未确认或渠道 Listing 尚未生成，不能导出。" }, { status: 409 });
+  }
   const blocking = workspace.findings.filter((finding) => finding.severity === "high" && finding.status === "open");
   if (blocking.length) return Response.json({ error: "存在未处理的高风险项", blocking: blocking.map((item) => item.id) }, { status: 409 });
   const manifest = { product: workspace.project.productName, category: workspace.truth.category, channels: workspace.project.channels, exportedAt: new Date().toISOString(), disclaimer: "AI risk screening does not replace platform review or legal advice." };

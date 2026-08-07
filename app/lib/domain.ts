@@ -34,7 +34,17 @@ export interface ProductTruthProfile {
   prohibitedInventions: string[];
   missingInformation: string[];
   evidence: Evidence[];
+  sourceAsset?: UploadedAsset;
   confirmedAt?: string;
+}
+
+export interface UploadedAsset {
+  id: string;
+  url: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  kind: "source" | AssetVersion["kind"];
 }
 
 export interface ChannelProfile {
@@ -179,4 +189,13 @@ export interface ProjectWorkspace {
   findings: ComplianceFinding[];
   sources: RuleSource[];
   tasks: GenerationTask[];
+}
+
+export interface RuntimeStatus {
+  database: "available" | "unavailable";
+  objectStorage: "configured" | "unavailable";
+  modelRouter: {
+    configured: boolean;
+    mode: ModelMode;
+  };
 }

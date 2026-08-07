@@ -1,32 +1,42 @@
-import type { ProjectWorkspace } from "./domain";
-import { cloneFixture } from "./fixtures";
+import type { Channel, LaunchProject, ProjectWorkspace, RuntimeStatus, UploadedAsset } from "./domain";
 
 async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } });
-  if (!response.ok) throw new Error((await response.json().catch(() => ({})) as { error?: string }).error || `Request failed: ${response.status}`);
-  return response.json() as Promise<T>;
+  const headers = new Headers(init?.headers);
+  if (init?.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  const response = await fetch(input, { ...init, headers });
+  const payload = await response.json().catch(() => ({})) as T & { error?: string };
+  if (!response.ok) throw new Error(payload.error || `请求失败（${response.status}）`);
+  return payload;
 }
 
-export async function loadWorkspace(id = "project_demo") {
-  try { return await json<{ workspace: ProjectWorkspace; storage: string; versions: Array<{ id: string; version: number; reason: string; createdAt: string }> }>(`/api/projects/${id}`); }
-  catch { return { workspace: cloneFixture(), storage: "fixture", versions: [{ id: "fixture-v1", version: 1, reason: "Fixture 基线", createdAt: new Date().toISOString() }] }; }
+export function listProjects() {
+  return json<{ projects: LaunchProject[]; storage: "d1" }>("/api/projects");
 }
 
-export async function runWorkflow(id: string, action: "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes", workspace: ProjectWorkspace) {
-  try { return await json<{ workspace: ProjectWorkspace; storage: string }>(`/api/projects/${id}/workflow`, { method: "POST", body: JSON.stringify({ action, workspace }) }); }
-  catch {
-    const copy = JSON.parse(JSON.stringify(workspace)) as ProjectWorkspace;
-    const now = new Date().toISOString();
-    if (action === "confirm_truth") { copy.truth.confirmedAt = now; copy.project.currentStep = "assets"; }
-    if (action === "generate") copy.project.currentStep = "listing";
-    if (action === "scan") copy.project.currentStep = "compliance";
-    if (action === "apply_fixes") { copy.findings = copy.findings.map((finding) => ({ ...finding, status: finding.status === "open" ? "fixed" : finding.status })); copy.project.currentStep = "export"; copy.project.status = "completed"; }
-    copy.project.updatedAt = now;
-    return { workspace: copy, storage: "fixture" };
-  }
+export function createProject(input: { name?: string; productName: string; category?: string; channels: Channel[] }) {
+  return json<{ workspace: ProjectWorkspace; version: number; storage: "d1" }>("/api/projects", { method: "POST", body: JSON.stringify(input) });
 }
 
-export async function saveWorkspace(workspace: ProjectWorkspace, reason: string) {
-  try { return await json<{ workspace: ProjectWorkspace; version: number; storage: string }>(`/api/projects/${workspace.project.id}`, { method: "PUT", body: JSON.stringify({ workspace, reason }) }); }
-  catch { return { workspace, version: 1, storage: "fixture" }; }
+export function loadWorkspace(id: string) {
+  return json<{ workspace: ProjectWorkspace; storage: "d1"; versions: Array<{ id: string; version: number; reason: string; createdAt: string }> }>(`/api/projects/${id}`);
+}
+
+export function runWorkflow(id: string, action: "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes", workspace: ProjectWorkspace) {
+  return json<{ workspace: ProjectWorkspace; storage: "d1" }>(`/api/projects/${id}/workflow`, { method: "POST", body: JSON.stringify({ action, workspace }) });
+}
+
+export function saveWorkspace(workspace: ProjectWorkspace, reason: string) {
+  return json<{ workspace: ProjectWorkspace; version: number; storage: "d1" }>(`/api/projects/${workspace.project.id}`, { method: "PUT", body: JSON.stringify({ workspace, reason }) });
+}
+
+export async function uploadAsset(projectId: string, file: File): Promise<UploadedAsset> {
+  const body = new FormData();
+  body.set("projectId", projectId);
+  body.set("kind", "source");
+  body.set("file", file);
+  return json<UploadedAsset>("/api/assets", { method: "POST", body });
+}
+
+export function getRuntimeStatus() {
+  return json<RuntimeStatus>("/api/status");
 }
