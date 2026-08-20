@@ -47,7 +47,7 @@ export function ExperienceStudio() {
     if (!workspace) return;
     setBusy(true); setError(""); setMessage("");
     try {
-      const result = await runWorkflow(workspace.project.id, action, workspace);
+      const result = await runWorkflow(workspace.project.id, action, workspace, action === "generate" ? channel : undefined);
       setWorkspace(result.workspace);
       setProjects((items) => items.map((item) => item.id === result.workspace.project.id ? result.workspace.project : item));
       if (next) setSpace(next);
@@ -136,7 +136,7 @@ function CreationStudio({ workspace, setWorkspace, channel, setChannel, view, se
   const listing = workspace.listings.find((item) => item.channel === channel)!;
   const setListing = (patch: Partial<typeof listing>) => setWorkspace({ ...workspace, listings: workspace.listings.map((item) => item.channel === channel ? { ...item, ...patch } : item) });
   return <section className="canvas-space"><div className="canvas-top"><SpaceIntro number="02" label="CREATIVE CANVAS" title="每个渠道独立生成、独立编辑。" text="当前区域只显示项目中真实存在的内容；空结果不会用模板填充。" compact /><div className="channel-switch">{workspace.project.channels.map((item) => <button key={item} className={channel === item ? "active" : ""} onClick={() => setChannel(item)}>{channelNames[item]}</button>)}</div></div>
-    <div className="canvas-toolbar"><div>{(["assets", "listing", "page"] as CreateView[]).map((item, index) => <button key={item} className={view === item ? "active" : ""} onClick={() => setView(item)}>{["商品图片", "Listing", "详情页"][index]}</button>)}</div><span>{workspace.truth.confirmedAt ? "事实档案已确认" : "事实档案未确认"}</span><button className="regenerate" disabled={busy || !aiReady || !workspace.truth.confirmedAt} onClick={onGenerate}>{aiReady ? (busy ? "真实模型生成中…" : "调用 Model Router 生成") : "配置 Token 后可生成"}</button></div>
+    <div className="canvas-toolbar"><div>{(["assets", "listing", "page"] as CreateView[]).map((item, index) => <button key={item} className={view === item ? "active" : ""} onClick={() => setView(item)}>{["商品图片", "Listing", "详情页"][index]}</button>)}</div><span>{workspace.truth.confirmedAt ? "事实档案已确认" : "事实档案未确认"}</span><button className="regenerate" disabled={busy || !aiReady || !workspace.truth.confirmedAt} onClick={onGenerate}>{aiReady ? (busy ? "真实模型生成中…" : `生成 ${channelNames[channel]}`) : "配置 Token 后可生成"}</button></div>
     <div className="creative-layout"><section className="result-canvas">{view === "assets" && <AssetGallery workspace={workspace} channel={channel} />}{view === "listing" && <ListingEditor listing={listing} setListing={setListing} />}{view === "page" && <PagePreview workspace={workspace} channel={channel} />}</section>
       <aside className="result-rail"><span className="rail-kicker">CURRENT DATA</span><h3>{channelNames[channel]}</h3><div className="result-score"><strong>{listing.score || "—"}</strong><span>{listing.score ? "模型评分" : "尚未生成"}</span></div><div className="rail-stat"><span>事实关联</span><b>{listing.claims.filter((item) => !item.needsEvidence).length}/{listing.claims.length}</b></div><div className="rail-stat"><span>真实图片</span><b>{workspace.assets.filter((asset) => asset.channel === channel).length}</b></div><button className="quiet-action" onClick={onSave} disabled={busy}>保存修改</button><button className="main-action" onClick={onCompliance}>进入合规检查 →</button></aside></div>
   </section>;
@@ -144,7 +144,7 @@ function CreationStudio({ workspace, setWorkspace, channel, setChannel, view, se
 
 function AssetGallery({ workspace, channel }: { workspace: ProjectWorkspace; channel: Channel }) {
   const assets = workspace.assets.filter((asset) => asset.channel === channel);
-  if (!assets.length) return <div className="empty-panel large"><b>尚未生成商品图片</b><p>配置 Model Router Token 并确认商品事实后，系统会真实调用图片模型生成五类素材。</p></div>;
+  if (!assets.length) return <div className="empty-panel large"><b>尚未生成商品图片</b><p>配置 Token Plan API Key 并确认商品事实后，系统会参考商品原图生成五类真实素材。</p></div>;
   return <div className="asset-gallery">{assets.map((asset) => <article className={`creative-asset asset-${asset.kind}`} key={asset.id}><div><img src={asset.url} alt={assetNames[asset.kind]} /></div><footer><span><b>{assetNames[asset.kind]}</b>{asset.complianceStatus === "pending" ? "待复检" : asset.complianceStatus}</span><small>v{asset.version}</small></footer></article>)}</div>;
 }
 

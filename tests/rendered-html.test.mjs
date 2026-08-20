@@ -22,16 +22,19 @@ test("server-renders the real-data workspace", async () => {
   assert.doesNotMatch(html, /演示模式|便携榨汁杯|96%|codex-preview|Your site is taking shape/);
 });
 
-test("keeps Model Router credentials server-side", async () => {
+test("keeps Token Plan credentials server-side", async () => {
   const [adapter, client, envExample] = await Promise.all([
     readFile(new URL("../app/lib/model-router.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/api-client.ts", import.meta.url), "utf8"),
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
   ]);
-  assert.match(adapter, /MODEL_ROUTER_API_KEY/);
-  assert.doesNotMatch(client, /MODEL_ROUTER_API_KEY|Authorization/);
-  assert.match(envExample, /MODEL_ROUTER_MODE=live/);
-  assert.match(adapter, /process\.env\.MODEL_ROUTER_MODE !== "fixture"/);
+  assert.match(adapter, /TOKEN_PLAN_API_KEY/);
+  assert.doesNotMatch(client, /TOKEN_PLAN_API_KEY|MODEL_ROUTER_API_KEY|Authorization/);
+  assert.match(envExample, /TOKEN_PLAN_MODE=live/);
+  assert.match(envExample, /token-plan\.cn-beijing\.maas\.aliyuncs\.com\/compatible-mode\/v1/);
+  assert.match(adapter, /qwen3\.7-plus/);
+  assert.match(adapter, /multimodal-generation\/generation/);
+  assert.doesNotMatch(adapter, /dashscope\.aliyuncs\.com|\/images\/generations/);
 });
 
 test("implements the truth, compliance, version and asset contracts", async () => {

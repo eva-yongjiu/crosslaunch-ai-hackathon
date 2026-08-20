@@ -46,7 +46,7 @@ function removeUnsupportedClaims(workspace: ProjectWorkspace) {
   });
 }
 
-async function generateAssets(workspace: ProjectWorkspace): Promise<AssetVersion[]> {
+async function generateAssets(workspace: ProjectWorkspace, channels: Channel[], sourceImage: string): Promise<AssetVersion[]> {
   const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.name}: ${fact.value}`).join("; ");
   const kinds: AssetVersion["kind"][] = ["main", "scene", "model", "comparison", "size"];
   const prompts: Record<AssetVersion["kind"], string> = {
@@ -56,8 +56,8 @@ async function generateAssets(workspace: ProjectWorkspace): Promise<AssetVersion
     comparison: "clean comparison infographic using only the supplied verified facts",
     size: "technical size and specification infographic using only the supplied verified facts",
   };
-  const jobs = workspace.project.channels.flatMap((channel) => kinds.map(async (kind) => {
-    const result = await generateImage(`Create a ${prompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Preserve product color, structure, logo and included accessories. Target channel: ${channel}. Do not invent specifications or certifications.`);
+  const jobs = channels.flatMap((channel) => kinds.map(async (kind) => {
+    const result = await generateImage(`Use the supplied product photo as the authoritative visual reference. Create a ${prompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. Do not invent specifications, certifications, extra accessories or packaging.`, "2048*2048", sourceImage);
     const remoteUrl = result.data?.[0]?.url;
     const encoded = result.data?.[0]?.b64_json;
     if (!remoteUrl && !encoded) throw new Error(`图片模型没有返回 ${channel}/${kind} 的结果。`);
@@ -84,7 +84,7 @@ async function generateAssets(workspace: ProjectWorkspace): Promise<AssetVersion
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const body = await request.json().catch(() => ({})) as { action?: Action; workspace?: ProjectWorkspace };
+  const body = await request.json().catch(() => ({})) as { action?: Action; workspace?: ProjectWorkspace; channel?: Channel };
   if (!body.action) return Response.json({ error: "缺少工作流动作。" }, { status: 400 });
   let workspace = body.workspace;
   if (!workspace) {
@@ -119,14 +119,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     } else if (action === "generate") {
       assertModelRouterConfigured();
       if (!workspace.truth.confirmedAt) throw new Error("请先确认商品事实档案。");
+      const targetChannels = body.channel && workspace.project.channels.includes(body.channel) ? [body.channel] : workspace.project.channels;
       const verifiedFacts = workspace.truth.attributes.filter((fact) => fact.status === "verified");
       const generated = await chatJson<GeneratedContent>(
         "You create US ecommerce listings grounded exclusively in verified product facts. Return strict JSON. Objective claims must include factIds; unsupported claims must set needsEvidence=true. Produce separate channel-specific content.",
-        JSON.stringify({ productName: workspace.truth.productName, category: workspace.truth.category, verifiedFacts, channels: workspace.project.channels, required: { listings: "one per channel with channel,strategy,title,bullets,description,searchTerms/metaTitle/metaDescription,claims,score", details: "object keyed by channel with 3-6 modules" } }),
+        JSON.stringify({ productName: workspace.truth.productName, category: workspace.truth.category, verifiedFacts, channels: targetChannels, required: { listings: "one per channel with channel,strategy,title,bullets,description,searchTerms/metaTitle/metaDescription,claims,score", details: "object keyed by channel with 3-6 modules" } }),
       );
-      workspace.listings = generated.listings.filter((listing) => workspace!.project.channels.includes(listing.channel));
+      const generatedListings = generated.listings.filter((listing) => targetChannels.includes(listing.channel));
+      workspace.listings = workspace.listings.map((listing) => generatedListings.find((item) => item.channel === listing.channel) ?? listing);
       workspace.details = { ...workspace.details, ...generated.details };
-      workspace.assets = await generateAssets(workspace);
+      const sourceImage = await sourceImageDataUrl(workspace);
+      const generatedAssets = await generateAssets(workspace, targetChannels, sourceImage);
+      workspace.assets = [...workspace.assets.filter((asset) => !targetChannels.includes(asset.channel)), ...generatedAssets];
       workspace.project.currentStep = "listing";
       workspace.project.status = "needs_review";
     } else if (action === "scan") {

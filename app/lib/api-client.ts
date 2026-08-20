@@ -21,8 +21,8 @@ export function loadWorkspace(id: string) {
   return json<{ workspace: ProjectWorkspace; storage: "d1"; versions: Array<{ id: string; version: number; reason: string; createdAt: string }> }>(`/api/projects/${id}`);
 }
 
-export function runWorkflow(id: string, action: "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes", workspace: ProjectWorkspace) {
-  return json<{ workspace: ProjectWorkspace; storage: "d1" }>(`/api/projects/${id}/workflow`, { method: "POST", body: JSON.stringify({ action, workspace }) });
+export function runWorkflow(id: string, action: "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes", workspace: ProjectWorkspace, channel?: Channel) {
+  return json<{ workspace: ProjectWorkspace; storage: "d1" }>(`/api/projects/${id}/workflow`, { method: "POST", body: JSON.stringify({ action, workspace, channel }) });
 }
 
 export function saveWorkspace(workspace: ProjectWorkspace, reason: string) {
