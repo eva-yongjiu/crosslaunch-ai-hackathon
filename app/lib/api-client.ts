@@ -21,18 +21,18 @@ export function loadWorkspace(id: string) {
   return json<{ workspace: ProjectWorkspace; storage: "d1" | "local"; versions: Array<{ id: string; version: number; reason: string; createdAt: string }> }>(`/api/projects/${id}`);
 }
 
-export function runWorkflow(id: string, action: "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes", workspace: ProjectWorkspace, channel?: Channel) {
-  return json<{ workspace: ProjectWorkspace; storage: "d1" | "local" }>(`/api/projects/${id}/workflow`, { method: "POST", body: JSON.stringify({ action, workspace, channel }) });
+export function runWorkflow(id: string, action: "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes" | "regenerate_asset", workspace: ProjectWorkspace, channel?: Channel, assetId?: string) {
+  return json<{ workspace: ProjectWorkspace; storage: "d1" | "local" }>(`/api/projects/${id}/workflow`, { method: "POST", body: JSON.stringify({ action, workspace, channel, assetId }) });
 }
 
 export function saveWorkspace(workspace: ProjectWorkspace, reason: string) {
   return json<{ workspace: ProjectWorkspace; version: number; storage: "d1" | "local" }>(`/api/projects/${workspace.project.id}`, { method: "PUT", body: JSON.stringify({ workspace, reason }) });
 }
 
-export async function uploadAsset(projectId: string, file: File): Promise<UploadedAsset> {
+export async function uploadAsset(projectId: string, file: File, kind: UploadedAsset["kind"] = "source"): Promise<UploadedAsset> {
   const body = new FormData();
   body.set("projectId", projectId);
-  body.set("kind", "source");
+  body.set("kind", kind);
   body.set("file", file);
   return json<UploadedAsset>("/api/assets", { method: "POST", body });
 }

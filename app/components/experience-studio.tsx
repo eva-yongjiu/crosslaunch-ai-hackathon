@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { ChangeEvent, useEffect, useState } from "react";
-import type { Channel, LaunchProject, ProductFact, ProjectWorkspace, RuntimeStatus } from "../lib/domain";
+import type { AssetVersion, Channel, LaunchProject, ProductFact, ProjectWorkspace, RuntimeStatus } from "../lib/domain";
 import { createProject, getRuntimeStatus, listProjects, loadWorkspace, runWorkflow, saveWorkspace, uploadAsset } from "../lib/api-client";
 
 type Space = "projects" | "truth" | "create" | "compliance";
@@ -43,15 +43,15 @@ export function ExperienceStudio() {
     }).catch((cause) => setError(errorText(cause)));
   }, []);
 
-  const execute = async (action: "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes", next?: Space) => {
+  const execute = async (action: "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes" | "regenerate_asset", next?: Space, assetId?: string) => {
     if (!workspace) return;
     setBusy(true); setError(""); setMessage("");
     try {
-      const result = await runWorkflow(workspace.project.id, action, workspace, action === "generate" ? channel : undefined);
+      const result = await runWorkflow(workspace.project.id, action, workspace, action === "generate" ? channel : undefined, assetId);
       setWorkspace(result.workspace);
       setProjects((items) => items.map((item) => item.id === result.workspace.project.id ? result.workspace.project : item));
       if (next) setSpace(next);
-      setMessage(action === "scan" || action === "apply_fixes" ? "合规检查已执行并保存。" : "操作已执行并保存。" );
+      setMessage(action === "regenerate_asset" ? "单张素材已重新生成，请重新运行合规检查。" : action === "scan" || action === "apply_fixes" ? "合规检查已执行并保存。" : "操作已执行并保存。" );
     } catch (cause) { setError(errorText(cause)); }
     finally { setBusy(false); }
   };
@@ -63,6 +63,21 @@ export function ExperienceStudio() {
       const result = await saveWorkspace(workspace, reason);
       setWorkspace(result.workspace); setMessage(`已保存为版本 ${result.version}`);
       await refreshProjects();
+    } catch (cause) { setError(errorText(cause)); }
+    finally { setBusy(false); }
+  };
+
+  const replaceAsset = async (assetId: string, file: File) => {
+    if (!workspace) return;
+    const current = workspace.assets.find((asset) => asset.id === assetId);
+    if (!current) return setError("需要替换的图片不存在，可能已被其他操作替换。" );
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const uploaded = await uploadAsset(workspace.project.id, file, current.kind);
+      const replacement: AssetVersion = { ...current, id: uploaded.id, url: uploaded.url, version: current.version + 1, consistencyScore: 0, complianceStatus: "pending", replacedFromId: current.id };
+      const next: ProjectWorkspace = { ...workspace, assets: workspace.assets.map((asset) => asset.id === current.id ? replacement : asset), findings: workspace.findings.filter((finding) => finding.target !== `${current.channel}/${current.kind} image`), project: { ...workspace.project, currentStep: "compliance", status: "needs_review", updatedAt: new Date().toISOString() } };
+      const saved = await saveWorkspace(next, "替换商品图片");
+      setWorkspace(saved.workspace); await refreshProjects(); setMessage("图片已替换，请重新运行合规检查。" );
     } catch (cause) { setError(errorText(cause)); }
     finally { setBusy(false); }
   };
@@ -87,11 +102,11 @@ export function ExperienceStudio() {
         const sourceAsset = await uploadAsset(workspace.project.id, file);
         const next = { ...workspace, truth: { ...workspace.truth, sourceAsset, confirmedAt: undefined }, project: { ...workspace.project, currentStep: "input", status: "queued" as const } };
         const saved = await saveWorkspace(next, "上传商品原图");
-        setWorkspace(saved.workspace); setMessage("商品原图已写入 R2 并保存。" );
+         setWorkspace(saved.workspace); setMessage("商品原图已写入对象存储并保存。" );
       } catch (cause) { setError(errorText(cause)); }
       finally { setBusy(false); }
     }} onAnalyze={() => execute("analyze")} onConfirm={() => execute("confirm_truth", "create")} onSave={() => save("编辑商品事实")} />}
-    {workspace && space === "create" && <CreationStudio workspace={workspace} setWorkspace={setWorkspace} channel={channel} setChannel={setChannel} view={view} setView={setView} busy={busy} aiReady={Boolean(runtime?.modelRouter.configured)} onGenerate={() => execute("generate")} onSave={() => save("编辑渠道内容")} onCompliance={() => setSpace("compliance")} />}
+    {workspace && space === "create" && <CreationStudio workspace={workspace} setWorkspace={setWorkspace} channel={channel} setChannel={setChannel} view={view} setView={setView} busy={busy} aiReady={Boolean(runtime?.modelRouter.configured)} onGenerate={() => execute("generate")} onRegenerateAsset={(assetId) => execute("regenerate_asset", undefined, assetId)} onReplaceAsset={replaceAsset} onSave={() => save("编辑渠道内容")} onCompliance={() => setSpace("compliance")} />}
     {workspace && space === "compliance" && <ComplianceCenter workspace={workspace} busy={busy} onScan={() => execute("scan")} onFix={() => execute("apply_fixes")} />}
   </main>;
 }
@@ -108,7 +123,7 @@ function ProjectsHome({ projects, busy, onOpen, onCreated, onError }: { projects
     finally { setCreating(false); }
   };
   return <section className="home-space real-home">
-    <div className="home-hero compact-real"><div className="hero-copy"><span className="eyebrow">真实数据工作台</span><h1>从真实商品开始，<br />生成可追溯的跨境内容。</h1><p>项目写入 D1，图片写入 R2。接口失败会直接提示，不再回退为演示数据。</p></div>
+      <div className="home-hero compact-real"><div className="hero-copy"><span className="eyebrow">真实数据工作台</span><h1>从真实商品开始，<br />生成可追溯的跨境内容。</h1><p>项目和图片写入持久化存储。接口失败会直接提示，不再回退为演示数据。</p></div>
       <div className="create-card"><h2>新建商品项目</h2><label>商品名称<input value={productName} onChange={(event) => setProductName(event.target.value)} placeholder="例如：不锈钢保温杯" /></label><label>商品品类<input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="例如：厨房用品（可稍后修改）" /></label><p>首发渠道：Amazon US · TikTok Shop US · Shopify US</p><button className="main-action" disabled={creating || busy} onClick={submit}>{creating ? "正在创建…" : "创建空白项目 →"}</button></div></div>
     <div className="recent-block"><div className="section-title"><div><span>REAL PROJECTS</span><h2>已保存项目</h2></div><b>{projects.length} 个</b></div>
       {projects.length ? <div className="project-row real-projects">{projects.map((project) => <button className="project-tile current" key={project.id} onClick={() => onOpen(project.id)} disabled={busy}><div className="tile-visual neutral">{project.productName.slice(0, 1).toUpperCase()}</div><div><span className={`project-state ${project.status === "completed" ? "done" : "review"}`}>{statusName(project.status)}</span><h3>{project.name}</h3><p>{project.channels.map((item) => channelNames[item]).join(" · ")}</p><small>更新于 {new Date(project.updatedAt).toLocaleString("zh-CN")}</small></div><b>打开 →</b></button>)}</div> : <div className="empty-panel"><b>还没有项目</b><p>上方创建的将是空白、可持久化的真实项目。</p></div>}
@@ -122,7 +137,7 @@ function TruthWorkbench({ workspace, setWorkspace, busy, aiReady, onUpload, onAn
   const addFact = () => updateTruth({ attributes: [...workspace.truth.attributes, { id: crypto.randomUUID(), name: "", value: "", status: "pending", confidence: 1, evidenceIds: [] }] });
   const verified = workspace.truth.attributes.filter((fact) => fact.status === "verified").length;
   return <section className="focused-space"><SpaceIntro number="01" label="PRODUCT TRUTH" title="先建立真实商品事实，再让 AI 创作。" text="你可以上传原图让视觉模型识别，也可以手动录入。只有标记为“已确认”的事实能进入生成结果。" />
-    <div className="workbench-grid"><label className="product-stage"><input type="file" accept="image/*" disabled={busy} onChange={(event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (file) onUpload(file); event.target.value = ""; }} />{workspace.truth.sourceAsset ? <img src={workspace.truth.sourceAsset.url} alt="商品原图" /> : <div className="upload-placeholder"><b>上传真实商品原图</b><span>JPG / PNG / WEBP，最大 8MB</span></div>}<span className="stage-chip">R2 原始素材</span><button type="button">{workspace.truth.sourceAsset ? "更换图片" : "选择图片"}</button></label>
+      <div className="workbench-grid"><label className="product-stage"><input type="file" accept="image/*" disabled={busy} onChange={(event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (file) onUpload(file); event.target.value = ""; }} />{workspace.truth.sourceAsset ? <img src={workspace.truth.sourceAsset.url} alt="商品原图" /> : <div className="upload-placeholder"><b>上传真实商品原图</b><span>JPG / PNG / WEBP，最大 8MB</span></div>}<span className="stage-chip">原始商品素材</span><button type="button">{workspace.truth.sourceAsset ? "更换图片" : "选择图片"}</button></label>
       <section className="truth-editor real-editor"><header><div><span>商品事实档案</span><input className="title-input" value={workspace.truth.productName} onChange={(event) => updateTruth({ productName: event.target.value })} /></div><strong>{verified}<small>已确认事实</small></strong></header>
         <label className="inline-field">商品品类<input value={workspace.truth.category} onChange={(event) => updateTruth({ category: event.target.value })} /></label>
         <div className="truth-actions"><button className="quiet-action" onClick={onAnalyze} disabled={busy || !aiReady || !workspace.truth.sourceAsset}>{aiReady ? "AI 识别原图" : "AI 未配置"}</button><button className="quiet-action" onClick={addFact}>＋ 手动添加事实</button></div>
@@ -132,20 +147,20 @@ function TruthWorkbench({ workspace, setWorkspace, busy, aiReady, onUpload, onAn
   </section>;
 }
 
-function CreationStudio({ workspace, setWorkspace, channel, setChannel, view, setView, busy, aiReady, onGenerate, onSave, onCompliance }: { workspace: ProjectWorkspace; setWorkspace: (value: ProjectWorkspace) => void; channel: Channel; setChannel: (value: Channel) => void; view: CreateView; setView: (value: CreateView) => void; busy: boolean; aiReady: boolean; onGenerate: () => void; onSave: () => void; onCompliance: () => void }) {
+function CreationStudio({ workspace, setWorkspace, channel, setChannel, view, setView, busy, aiReady, onGenerate, onRegenerateAsset, onReplaceAsset, onSave, onCompliance }: { workspace: ProjectWorkspace; setWorkspace: (value: ProjectWorkspace) => void; channel: Channel; setChannel: (value: Channel) => void; view: CreateView; setView: (value: CreateView) => void; busy: boolean; aiReady: boolean; onGenerate: () => void; onRegenerateAsset: (assetId: string) => void; onReplaceAsset: (assetId: string, file: File) => void; onSave: () => void; onCompliance: () => void }) {
   const listing = workspace.listings.find((item) => item.channel === channel)!;
   const setListing = (patch: Partial<typeof listing>) => setWorkspace({ ...workspace, listings: workspace.listings.map((item) => item.channel === channel ? { ...item, ...patch } : item) });
   return <section className="canvas-space"><div className="canvas-top"><SpaceIntro number="02" label="CREATIVE CANVAS" title="每个渠道独立生成、独立编辑。" text="当前区域只显示项目中真实存在的内容；空结果不会用模板填充。" compact /><div className="channel-switch">{workspace.project.channels.map((item) => <button key={item} className={channel === item ? "active" : ""} onClick={() => setChannel(item)}>{channelNames[item]}</button>)}</div></div>
     <div className="canvas-toolbar"><div>{(["assets", "listing", "page"] as CreateView[]).map((item, index) => <button key={item} className={view === item ? "active" : ""} onClick={() => setView(item)}>{["商品图片", "Listing", "详情页"][index]}</button>)}</div><span>{workspace.truth.confirmedAt ? "事实档案已确认" : "事实档案未确认"}</span><button className="regenerate" disabled={busy || !aiReady || !workspace.truth.confirmedAt} onClick={onGenerate}>{aiReady ? (busy ? "真实模型生成中…" : `生成 ${channelNames[channel]}`) : "配置 Token 后可生成"}</button></div>
-    <div className="creative-layout"><section className="result-canvas">{view === "assets" && <AssetGallery workspace={workspace} channel={channel} />}{view === "listing" && <ListingEditor listing={listing} setListing={setListing} />}{view === "page" && <PagePreview workspace={workspace} channel={channel} />}</section>
+     <div className="creative-layout"><section className="result-canvas">{view === "assets" && <AssetGallery workspace={workspace} channel={channel} busy={busy} aiReady={aiReady} onRegenerate={onRegenerateAsset} onReplace={onReplaceAsset} />}{view === "listing" && <ListingEditor listing={listing} setListing={setListing} />}{view === "page" && <PagePreview workspace={workspace} channel={channel} />}</section>
       <aside className="result-rail"><span className="rail-kicker">CURRENT DATA</span><h3>{channelNames[channel]}</h3><div className="result-score"><strong>{listing.score || "—"}</strong><span>{listing.score ? "模型评分" : "尚未生成"}</span></div><div className="rail-stat"><span>事实关联</span><b>{listing.claims.filter((item) => !item.needsEvidence).length}/{listing.claims.length}</b></div><div className="rail-stat"><span>真实图片</span><b>{workspace.assets.filter((asset) => asset.channel === channel).length}</b></div><button className="quiet-action" onClick={onSave} disabled={busy}>保存修改</button><button className="main-action" onClick={onCompliance}>进入合规检查 →</button></aside></div>
   </section>;
 }
 
-function AssetGallery({ workspace, channel }: { workspace: ProjectWorkspace; channel: Channel }) {
+function AssetGallery({ workspace, channel, busy, aiReady, onRegenerate, onReplace }: { workspace: ProjectWorkspace; channel: Channel; busy: boolean; aiReady: boolean; onRegenerate: (assetId: string) => void; onReplace: (assetId: string, file: File) => void }) {
   const assets = workspace.assets.filter((asset) => asset.channel === channel);
   if (!assets.length) return <div className="empty-panel large"><b>尚未生成商品图片</b><p>配置 Token Plan API Key 并确认商品事实后，系统会参考商品原图生成五类真实素材。</p></div>;
-  return <div className="asset-gallery">{assets.map((asset) => <article className={`creative-asset asset-${asset.kind}`} key={asset.id}><div><img src={asset.url} alt={assetNames[asset.kind]} /></div><footer><span><b>{assetNames[asset.kind]}</b>{asset.complianceStatus === "pending" ? "待复检" : asset.complianceStatus}</span><small>v{asset.version}</small></footer></article>)}</div>;
+  return <div className="asset-gallery">{assets.map((asset) => <article className={`creative-asset asset-${asset.kind}`} key={asset.id}><div><img src={asset.url} alt={assetNames[asset.kind]} /></div><footer><span><b>{assetNames[asset.kind]}</b>{assetStatusName(asset.complianceStatus)}</span><div className="asset-actions"><small>v{asset.version}</small><button type="button" disabled={busy || !aiReady || !workspace.truth.confirmedAt} onClick={() => onRegenerate(asset.id)}>{busy ? "处理中…" : "重新生成"}</button><label className={`asset-replace ${busy || !workspace.truth.confirmedAt ? "disabled" : ""}`}>替换<input type="file" accept="image/*" disabled={busy || !workspace.truth.confirmedAt} onChange={(event) => { const file = event.target.files?.[0]; if (file) onReplace(asset.id, file); event.target.value = ""; }} /></label></div></footer></article>)}</div>;
 }
 
 function ListingEditor({ listing, setListing }: { listing: ProjectWorkspace["listings"][number]; setListing: (patch: Partial<ProjectWorkspace["listings"][number]>) => void }) {
@@ -178,3 +193,4 @@ function SpaceIntro({ number, label, title, text, compact = false }: { number: s
 function errorText(cause: unknown) { return cause instanceof Error ? cause.message : "操作失败。"; }
 function statusName(status: LaunchProject["status"]) { return ({ queued: "待开始", running: "进行中", needs_review: "待审核", failed: "失败", completed: "已完成" } as const)[status]; }
 function coverageName(status: "full" | "partial" | "unsupported") { return status === "full" ? "已发布规则包完整覆盖" : status === "partial" ? "部分覆盖，需要人工复核" : "暂未覆盖，需要人工审核"; }
+function assetStatusName(status: "pending" | "passed" | "failed") { return status === "passed" ? "已通过" : status === "failed" ? "需替换" : "待复检"; }

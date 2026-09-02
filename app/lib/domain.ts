@@ -107,6 +107,8 @@ export interface AssetVersion {
   consistencyScore: number;
   complianceStatus: "pending" | "passed" | "failed";
   retries: number;
+  prompt?: string;
+  replacedFromId?: string;
 }
 
 export interface RuleSource {

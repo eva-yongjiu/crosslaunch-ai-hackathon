@@ -5,7 +5,7 @@ import { ruleSources } from "../../../../lib/rules";
 import { getStoredObject, putStoredObject } from "../../../../lib/storage";
 import type { AssetVersion, Channel, ChannelListing, ComplianceFinding, DetailModule, GenerationTask, ProductFact, ProjectWorkspace } from "../../../../lib/domain";
 
-type Action = "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes";
+type Action = "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes" | "regenerate_asset";
 type VisionResult = { category?: string; categoryConfidence?: number; facts?: Array<{ name: string; value: string; confidence?: number }>; identityLocks?: string[]; missingInformation?: string[] };
 type VisualReviewResult = { passed?: boolean; consistencyScore?: number; findings?: Array<{ excerpt?: string; severity?: "high" | "medium" | "low"; explanation?: string; suggestion?: string; bbox?: [number, number, number, number] }> };
 type GeneratedContent = { listings: ChannelListing[]; details: Partial<Record<Channel, DetailModule[]>> };
@@ -36,7 +36,7 @@ async function sourceImageDataUrl(workspace: ProjectWorkspace) {
 function makeTask(id: string, action: Action): GenerationTask {
   return {
     id: crypto.randomUUID(), projectId: id,
-    type: action === "scan" || action === "apply_fixes" ? "compliance" : action === "generate" ? "assets" : "analyze",
+    type: action === "scan" || action === "apply_fixes" ? "compliance" : action === "generate" || action === "regenerate_asset" ? "assets" : "analyze",
     mode: modelMode(), status: "running", retries: 0, inputSummary: action, startedAt: new Date().toISOString(),
   };
 }
@@ -49,44 +49,49 @@ function removeUnsupportedClaims(workspace: ProjectWorkspace) {
   });
 }
 
-async function generateAssets(workspace: ProjectWorkspace, channels: Channel[], sourceImage: string): Promise<AssetVersion[]> {
+const assetPrompts: Record<AssetVersion["kind"], string> = {
+  main: "clean ecommerce main product image on pure white background, no promotional text",
+  scene: "realistic lifestyle scene showing the product in a credible use context",
+  model: "commercial lifestyle photo with a US-market model naturally using the exact product",
+  comparison: "clean comparison infographic using only the supplied verified facts",
+  size: "technical size and specification infographic using only the supplied verified facts",
+};
+
+async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel, kind: AssetVersion["kind"], sourceImage: string, version: number, replacedFromId?: string, retries = 0): Promise<AssetVersion> {
   const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.name}: ${fact.value}`).join("; ");
-  const kinds: AssetVersion["kind"][] = ["main", "scene", "model", "comparison", "size"];
-  const prompts: Record<AssetVersion["kind"], string> = {
-    main: "clean ecommerce main product image on pure white background, no promotional text",
-    scene: "realistic lifestyle scene showing the product in a credible use context",
-    model: "commercial lifestyle photo with a US-market model naturally using the exact product",
-    comparison: "clean comparison infographic using only the supplied verified facts",
-    size: "technical size and specification infographic using only the supplied verified facts",
-  };
-  const generated: AssetVersion[] = [];
-  for (const channel of channels) for (const kind of kinds) {
-    const result = await generateImage(`Use the supplied product photo as the authoritative visual reference. Create a ${prompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. Do not invent specifications, certifications, extra accessories or packaging.`, "2048*2048", sourceImage);
-    const remoteUrl = result.data?.[0]?.url;
-    const encoded = result.data?.[0]?.b64_json;
-    if (!remoteUrl && !encoded) throw new Error(`图片模型没有返回 ${channel}/${kind} 的结果。`);
-    let bytes: Uint8Array;
-    let contentType = "image/png";
-    if (encoded) {
-      const binary = atob(encoded);
-      bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    } else {
-      let response: Response | undefined;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        response = await fetch(remoteUrl!);
-        if (response.ok) break;
-        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
-      }
-      if (!response?.ok) throw new Error(`无法下载模型生成的 ${channel}/${kind} 图片。`);
-      contentType = response.headers.get("content-type") || contentType;
-      bytes = new Uint8Array(await response.arrayBuffer());
+  const prompt = `Use the supplied product photo as the authoritative visual reference. Create a ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. Do not invent specifications, certifications, extra accessories or packaging.`;
+  const result = await generateImage(prompt, "2048*2048", sourceImage);
+  const remoteUrl = result.data?.[0]?.url;
+  const encoded = result.data?.[0]?.b64_json;
+  if (!remoteUrl && !encoded) throw new Error(`图片模型没有返回 ${channel}/${kind} 的结果。`);
+  let bytes: Uint8Array;
+  let contentType = "image/png";
+  if (encoded) {
+    const binary = atob(encoded);
+    bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } else {
+    let response: Response | undefined;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      response = await fetch(remoteUrl!);
+      if (response.ok) break;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
     }
-    const id = crypto.randomUUID();
-    const filename = `${channel}-${kind}.png`;
-    const objectKey = `projects/${workspace.project.id}/generated/${id}-${filename}`;
-    await putStoredObject(objectKey, bytes, contentType);
-    await saveAssetRecord({ id, projectId: workspace.project.id, objectKey, filename, contentType, size: bytes.byteLength, kind, createdAt: new Date().toISOString() });
-    generated.push({ id, kind, channel, url: `/api/assets/${id}`, version: 1, consistencyScore: 0, complianceStatus: "pending", retries: 0 });
+    if (!response?.ok) throw new Error(`无法下载模型生成的 ${channel}/${kind} 图片。`);
+    contentType = response.headers.get("content-type") || contentType;
+    bytes = new Uint8Array(await response.arrayBuffer());
+  }
+  const id = crypto.randomUUID();
+  const filename = `${channel}-${kind}-v${version}.png`;
+  const objectKey = `projects/${workspace.project.id}/generated/${id}-${filename}`;
+  await putStoredObject(objectKey, bytes, contentType);
+  await saveAssetRecord({ id, projectId: workspace.project.id, objectKey, filename, contentType, size: bytes.byteLength, kind, createdAt: new Date().toISOString() });
+  return { id, kind, channel, url: `/api/assets/${id}`, version, consistencyScore: 0, complianceStatus: "pending", retries, prompt, replacedFromId };
+}
+
+async function generateAssets(workspace: ProjectWorkspace, channels: Channel[], sourceImage: string): Promise<AssetVersion[]> {
+  const generated: AssetVersion[] = [];
+  for (const channel of channels) for (const kind of Object.keys(assetPrompts) as AssetVersion["kind"][]) {
+    generated.push(await generateSingleAsset(workspace, channel, kind, sourceImage, 1));
   }
   return generated;
 }
@@ -127,7 +132,7 @@ async function reviewAssets(workspace: ProjectWorkspace): Promise<ComplianceFind
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const body = await request.json().catch(() => ({})) as { action?: Action; workspace?: ProjectWorkspace; channel?: Channel };
+  const body = await request.json().catch(() => ({})) as { action?: Action; workspace?: ProjectWorkspace; channel?: Channel; assetId?: string };
   if (!body.action) return Response.json({ error: "缺少工作流动作。" }, { status: 400 });
   let workspace = body.workspace;
   if (!workspace) {
@@ -176,6 +181,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       workspace.assets = [...workspace.assets.filter((asset) => !targetChannels.includes(asset.channel)), ...generatedAssets];
       workspace.project.currentStep = "listing";
       workspace.project.status = "needs_review";
+    } else if (action === "regenerate_asset") {
+      assertModelRouterConfigured();
+      if (!workspace.truth.confirmedAt) throw new Error("请先确认商品事实档案。" );
+      if (!body.assetId) throw new Error("缺少需要重新生成的图片。" );
+      const current = workspace.assets.find((asset) => asset.id === body.assetId);
+      if (!current) throw new Error("需要重新生成的图片不存在，可能已被替换。" );
+      const sourceImage = await sourceImageDataUrl(workspace);
+      const replacement = await generateSingleAsset(workspace, current.channel, current.kind, sourceImage, current.version + 1, current.id, current.retries + 1);
+      workspace.assets = workspace.assets.map((asset) => asset.id === current.id ? replacement : asset);
+      workspace.findings = workspace.findings.filter((finding) => finding.target !== `${current.channel}/${current.kind} image`);
+      workspace.project.currentStep = "compliance";
+      workspace.project.status = "needs_review";
     } else if (action === "scan") {
       const listingFindings = workspace.listings.flatMap((listing) => scanListing(listing, workspace!.truth));
       const assetFindings = await reviewAssets(workspace);
@@ -189,7 +206,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       workspace.project.currentStep = "compliance";
       workspace.project.status = workspace.findings.some((finding) => finding.severity === "high") ? "needs_review" : "completed";
     }
-    Object.assign(task, { status: "completed", outputSummary: "工作流已真实执行并保存", completedAt: new Date().toISOString() });
+    Object.assign(task, { status: "completed", outputSummary: action === "regenerate_asset" ? "单张素材已重新生成，等待合规复检" : "工作流已真实执行并保存", completedAt: new Date().toISOString() });
     workspace.sources = ruleSources;
     workspace.project.updatedAt = new Date().toISOString();
     await persist(workspace, `工作流：${action}`);
