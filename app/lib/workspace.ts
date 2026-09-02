@@ -55,7 +55,7 @@ export function createEmptyWorkspace(input: {
       evidence: [],
     },
     listings: channels.map(emptyListing),
-    details: Object.fromEntries(channels.map((channel) => [channel, []])) as ProjectWorkspace["details"],
+    details: Object.fromEntries(channels.map((channel) => [channel, []])) as unknown as ProjectWorkspace["details"],
     assets: [],
     findings: [],
     sources: ruleSources,

@@ -1,14 +1,12 @@
-import { env } from "cloudflare:workers";
-import { eq } from "drizzle-orm";
-import { getDb } from "../../../../db";
-import { assetObjects } from "../../../../db/schema";
+import { getAssetRecord } from "../../../lib/asset-repository";
+import { getStoredObject } from "../../../lib/storage";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   try {
-    const [record] = await getDb().select().from(assetObjects).where(eq(assetObjects.id, id));
+    const record = await getAssetRecord(id);
     if (!record) return Response.json({ error: "图片不存在。" }, { status: 404 });
-    const object = await env.ASSETS_BUCKET.get(record.objectKey);
+    const object = await getStoredObject(record.objectKey);
     if (!object) return Response.json({ error: "图片文件不存在。" }, { status: 404 });
     return new Response(object.body, {
       headers: {

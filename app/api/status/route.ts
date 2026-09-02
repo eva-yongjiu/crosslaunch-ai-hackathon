@@ -1,4 +1,6 @@
 import { modelMode } from "../../lib/model-router";
+import { hasDatabase } from "../../../db";
+import { storageMode } from "../../lib/storage";
 
 export async function GET() {
   let database: "available" | "unavailable" = "unavailable";
@@ -9,7 +11,9 @@ export async function GET() {
   } catch { /* reported as unavailable */ }
   return Response.json({
     database,
+    databaseProvider: await hasDatabase() ? "d1" : "local",
     objectStorage: database === "available" ? "configured" : "unavailable",
+    objectStorageProvider: await storageMode(),
     modelRouter: { configured: modelMode() === "live", mode: modelMode() },
   });
 }

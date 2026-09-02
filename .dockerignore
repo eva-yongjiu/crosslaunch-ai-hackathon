@@ -1,0 +1,11 @@
+node_modules
+.git
+.data
+.next
+.vinext
+.wrangler
+dist
+build
+*.log
+.env*
+!/.env.example

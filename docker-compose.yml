@@ -1,0 +1,17 @@
+services:
+  crosslaunch:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      CROSSLAUNCH_DATA_DIR: /app/.data
+    volumes:
+      - crosslaunch-data:/app/.data
+
+volumes:
+  crosslaunch-data:

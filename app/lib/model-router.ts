@@ -30,16 +30,24 @@ function joinUrl(base: string, path: string) {
 async function request<T>(base: string, path: string, init: RequestInit, timeoutMs = 120_000): Promise<T> {
   const key = apiKey();
   if (!key) throw new Error("TOKEN_PLAN_API_KEY is not configured");
-  const response = await fetch(joinUrl(base, path), {
-    ...init,
-    signal: init.signal ?? AbortSignal.timeout(timeoutMs),
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, ...(init.headers ?? {}) },
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Token Plan ${response.status}: ${body.slice(0, 300)}`);
+  let lastError = "Token Plan 请求失败。";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(joinUrl(base, path), {
+        ...init,
+        signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, ...(init.headers ?? {}) },
+      });
+      if (response.ok) return response.json() as Promise<T>;
+      const body = await response.text();
+      lastError = `Token Plan ${response.status}: ${body.slice(0, 300)}`;
+      if (![408, 409, 425, 429].includes(response.status) && response.status < 500) break;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : lastError;
+    }
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
   }
-  return response.json() as Promise<T>;
+  throw new Error(lastError);
 }
 
 function chatBaseUrl() {
@@ -93,7 +101,7 @@ export async function visionJson<T>(system: string, prompt: string, imageDataUrl
 }
 
 type MultimodalImageResponse = {
-  output?: { choices?: Array<{ message?: { content?: Array<{ image?: string }> } }> };
+  output?: { choices?: Array<{ message?: { content?: Array<{ image?: string; b64_json?: string }> } }> };
   request_id?: string;
 };
 
@@ -109,8 +117,10 @@ export async function generateImage(prompt: string, size = "2048*2048", sourceIm
       parameters: { n: 1, size, watermark: false, prompt_extend: true },
     }),
   }, 180_000);
-  const images = result.output?.choices?.flatMap((choice) => choice.message?.content ?? []).map((item) => item.image).filter((url): url is string => Boolean(url)) ?? [];
-  return { data: images.map((url) => ({ url })), requestId: result.request_id };
+  const images = result.output?.choices?.flatMap((choice) => choice.message?.content ?? [])
+    .map((item) => ({ url: item.image, b64_json: item.b64_json }))
+    .filter((item) => Boolean(item.url || item.b64_json)) ?? [];
+  return { data: images, requestId: result.request_id };
 }
 
 export async function getProviderTask(taskId: string) {

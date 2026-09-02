@@ -193,7 +193,9 @@ export interface ProjectWorkspace {
 
 export interface RuntimeStatus {
   database: "available" | "unavailable";
+  databaseProvider: "d1" | "local";
   objectStorage: "configured" | "unavailable";
+  objectStorageProvider: "r2" | "local";
   modelRouter: {
     configured: boolean;
     mode: ModelMode;

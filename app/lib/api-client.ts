@@ -10,23 +10,23 @@ async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T>
 }
 
 export function listProjects() {
-  return json<{ projects: LaunchProject[]; storage: "d1" }>("/api/projects");
+  return json<{ projects: LaunchProject[]; storage: "d1" | "local" }>("/api/projects");
 }
 
 export function createProject(input: { name?: string; productName: string; category?: string; channels: Channel[] }) {
-  return json<{ workspace: ProjectWorkspace; version: number; storage: "d1" }>("/api/projects", { method: "POST", body: JSON.stringify(input) });
+  return json<{ workspace: ProjectWorkspace; version: number; storage: "d1" | "local" }>("/api/projects", { method: "POST", body: JSON.stringify(input) });
 }
 
 export function loadWorkspace(id: string) {
-  return json<{ workspace: ProjectWorkspace; storage: "d1"; versions: Array<{ id: string; version: number; reason: string; createdAt: string }> }>(`/api/projects/${id}`);
+  return json<{ workspace: ProjectWorkspace; storage: "d1" | "local"; versions: Array<{ id: string; version: number; reason: string; createdAt: string }> }>(`/api/projects/${id}`);
 }
 
 export function runWorkflow(id: string, action: "analyze" | "confirm_truth" | "generate" | "scan" | "apply_fixes", workspace: ProjectWorkspace, channel?: Channel) {
-  return json<{ workspace: ProjectWorkspace; storage: "d1" }>(`/api/projects/${id}/workflow`, { method: "POST", body: JSON.stringify({ action, workspace, channel }) });
+  return json<{ workspace: ProjectWorkspace; storage: "d1" | "local" }>(`/api/projects/${id}/workflow`, { method: "POST", body: JSON.stringify({ action, workspace, channel }) });
 }
 
 export function saveWorkspace(workspace: ProjectWorkspace, reason: string) {
-  return json<{ workspace: ProjectWorkspace; version: number; storage: "d1" }>(`/api/projects/${workspace.project.id}`, { method: "PUT", body: JSON.stringify({ workspace, reason }) });
+  return json<{ workspace: ProjectWorkspace; version: number; storage: "d1" | "local" }>(`/api/projects/${workspace.project.id}`, { method: "PUT", body: JSON.stringify({ workspace, reason }) });
 }
 
 export async function uploadAsset(projectId: string, file: File): Promise<UploadedAsset> {
