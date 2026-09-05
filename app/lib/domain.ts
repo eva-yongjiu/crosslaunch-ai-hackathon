@@ -1,4 +1,5 @@
 export type ModelMode = "fixture" | "live";
+export type OutputLanguage = "bilingual" | "en-US" | "zh-CN";
 export type TaskStatus = "queued" | "running" | "needs_review" | "failed" | "completed";
 export type CoverageStatus = "full" | "partial" | "unsupported";
 export type Channel = "amazon-us" | "tiktok-us" | "shopify-us";
@@ -17,7 +18,9 @@ export interface Evidence {
 export interface ProductFact {
   id: string;
   name: string;
+  nameZh?: string;
   value: string;
+  valueZh?: string;
   status: FactStatus;
   confidence: number;
   evidenceIds: string[];
@@ -28,11 +31,13 @@ export interface ProductTruthProfile {
   projectId: string;
   productName: string;
   category: string;
+  categoryZh?: string;
   categoryConfidence: number;
   attributes: ProductFact[];
   identityLocks: string[];
   prohibitedInventions: string[];
   missingInformation: string[];
+  missingInformationZh?: string[];
   evidence: Evidence[];
   sourceAsset?: UploadedAsset;
   confirmedAt?: string;
@@ -68,11 +73,17 @@ export interface ChannelListing {
   channel: Channel;
   strategy: "seo" | "brand" | "conversion";
   title: string;
+  titleZh?: string;
   bullets: string[];
+  bulletsZh?: string[];
   description: string;
+  descriptionZh?: string;
   searchTerms?: string;
+  searchTermsZh?: string;
   metaTitle?: string;
+  metaTitleZh?: string;
   metaDescription?: string;
+  metaDescriptionZh?: string;
   claims: ClaimLink[];
   score: number;
 }
@@ -81,7 +92,9 @@ export interface DetailModule {
   id: string;
   type: "hero" | "benefits" | "scenario" | "comparison" | "specs" | "steps" | "faq" | "reason";
   title: string;
+  titleZh?: string;
   body: string;
+  bodyZh?: string;
   factIds: string[];
   assetIds: string[];
 }
@@ -150,8 +163,20 @@ export interface ComplianceFinding {
   explanation: string;
   suggestion: string;
   bbox?: [number, number, number, number];
+  excerptZh?: string;
+  explanationZh?: string;
+  suggestionZh?: string;
+  location?: ComplianceLocation;
   fixedText?: string;
   version: number;
+}
+
+export interface ComplianceLocation {
+  kind: "listing" | "asset" | "detail";
+  channel: Channel;
+  field?: "title" | "bullet" | "description" | "searchTerms" | "metaTitle" | "metaDescription" | "detailTitle" | "detailBody";
+  index?: number;
+  assetId?: string;
 }
 
 export interface GenerationTask {
@@ -184,6 +209,7 @@ export interface LaunchProject {
 
 export interface ProjectWorkspace {
   project: LaunchProject;
+  outputLanguage: OutputLanguage;
   truth: ProductTruthProfile;
   listings: ChannelListing[];
   details: Record<Channel, DetailModule[]>;

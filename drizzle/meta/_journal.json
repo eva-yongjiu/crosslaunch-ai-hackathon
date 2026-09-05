@@ -8,6 +8,13 @@
       "when": 1786026531537,
       "tag": "0000_robust_jackpot",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788626585113,
+      "tag": "0001_foamy_the_liberteens",
+      "breakpoints": true
     }
   ]
 }

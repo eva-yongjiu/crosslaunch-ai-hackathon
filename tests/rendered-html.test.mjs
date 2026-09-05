@@ -39,9 +39,22 @@ test("keeps Token Plan credentials server-side", async () => {
 
 test("implements the truth, compliance, version and asset contracts", async () => {
   const domain = await readFile(new URL("../app/lib/domain.ts", import.meta.url), "utf8");
-  for (const contract of ["ProductTruthProfile", "GenerationTask", "RuleSource", "ComplianceFinding", "AssetVersion", "ContentVersion", "UploadedAsset", "RuntimeStatus"]) {
+  for (const contract of ["OutputLanguage", "ProductTruthProfile", "GenerationTask", "RuleSource", "ComplianceFinding", "AssetVersion", "ContentVersion", "UploadedAsset", "RuntimeStatus"]) {
     assert.match(domain, new RegExp(`interface ${contract}|type ${contract}`));
   }
+});
+
+test("supports bilingual AI output and precise compliance locations", async () => {
+  const [domain, workflow, compliance, component] = await Promise.all([
+    readFile(new URL("../app/lib/domain.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/projects/[id]/workflow/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/compliance.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/experience-studio.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(domain, /titleZh|bodyZh|nameZh/);
+  assert.match(workflow, /补齐中文|titleZh|explanationZh/);
+  assert.match(compliance, /location: segment\.location/);
+  assert.match(component, /定位并编辑/);
 });
 
 test("does not silently fall back to fixture data", async () => {
@@ -56,6 +69,7 @@ test("does not silently fall back to fixture data", async () => {
   await assert.rejects(readFile(new URL("../app/lib/fixtures.ts", import.meta.url), "utf8"));
   const repository = await readFile(new URL("../app/lib/repository.ts", import.meta.url), "utf8");
   assert.match(repository, /ne\(projects\.id, "project_demo"\)/);
+  assert.match(repository, /settingsJson/);
 });
 
 test("exports a real ZIP delivery package", async () => {

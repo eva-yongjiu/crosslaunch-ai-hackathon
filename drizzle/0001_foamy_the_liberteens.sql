@@ -1,0 +1,1 @@
+ALTER TABLE `workspaces` ADD `settings_json` text DEFAULT '{}' NOT NULL;

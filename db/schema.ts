@@ -21,6 +21,7 @@ export const workspaces = sqliteTable("workspaces", {
   assetsJson: text("assets_json").notNull(),
   findingsJson: text("findings_json").notNull(),
   tasksJson: text("tasks_json").notNull(),
+  settingsJson: text("settings_json").notNull().default("{}"),
   version: integer("version").notNull().default(1),
   updatedAt: text("updated_at").notNull(),
 });

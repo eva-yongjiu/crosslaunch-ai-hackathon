@@ -42,6 +42,7 @@ export function createEmptyWorkspace(input: {
       createdAt: now,
       updatedAt: now,
     },
+    outputLanguage: "bilingual",
     truth: {
       id: crypto.randomUUID(),
       projectId: id,
@@ -60,5 +61,18 @@ export function createEmptyWorkspace(input: {
     findings: [],
     sources: ruleSources,
     tasks: [],
+  };
+}
+
+export function normalizeWorkspace(workspace: ProjectWorkspace): ProjectWorkspace {
+  return {
+    ...workspace,
+    outputLanguage: workspace.outputLanguage ?? "bilingual",
+    truth: {
+      ...workspace.truth,
+      attributes: workspace.truth.attributes.map((fact) => ({ ...fact, nameZh: fact.nameZh ?? "", valueZh: fact.valueZh ?? "" })),
+    },
+    listings: workspace.listings.map((listing) => ({ ...listing, titleZh: listing.titleZh ?? "", bulletsZh: listing.bulletsZh ?? [], descriptionZh: listing.descriptionZh ?? "", searchTermsZh: listing.searchTermsZh ?? "", metaTitleZh: listing.metaTitleZh ?? "", metaDescriptionZh: listing.metaDescriptionZh ?? "" })),
+    details: Object.fromEntries(Object.entries(workspace.details).map(([channel, modules]) => [channel, (modules ?? []).map((module) => ({ ...module, titleZh: module.titleZh ?? "", bodyZh: module.bodyZh ?? "" }))])) as ProjectWorkspace["details"],
   };
 }
