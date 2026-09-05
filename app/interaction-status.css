@@ -1,0 +1,7 @@
+.truth-status-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px;padding:10px 12px;border:1px solid #dfe4dc;border-radius:10px;background:#f8faf5;color:#63756b;font-size:10px;line-height:1.5}
+.truth-status-row.loading{border-color:#b9d2bf;background:#eef7ef;color:#28633b}
+.truth-status-row strong{color:var(--forest-2);font-size:10px}
+.truth-status-row span{color:#7d8b84}
+.truth-confirm-hint{display:block;margin-top:7px;color:#8a5b13;font-size:9px;line-height:1.5}
+.truth-confirm-hint.ready{color:#377049}
+.quiet-action:disabled{opacity:.5;cursor:not-allowed}

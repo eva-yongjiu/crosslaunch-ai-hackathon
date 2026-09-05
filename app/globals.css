@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./experience.css";
 @import "./asset-actions.css";
+@import "./interaction-status.css";
 
 :root{--forest:#123d30;--forest-2:#1d5b43;--lime:#d8f45f;--paper:#f3f1e9;--card:#fffef9;--ink:#163229;--muted:#6f7c76;--line:#dadcd4;--amber:#b8771b;--red:#b84935}*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font-family:Arial,"Microsoft YaHei",sans-serif}button,input,textarea{font:inherit;color:inherit}button,a{cursor:pointer}
