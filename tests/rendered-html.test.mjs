@@ -63,10 +63,11 @@ test("supports bilingual AI output and precise compliance locations", async () =
 });
 
 test("supports AI compliance optimization and recheck", async () => {
-  const [workflow, component, client] = await Promise.all([
+  const [workflow, component, client, styles] = await Promise.all([
     readFile(new URL("../app/api/projects/[id]/workflow/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/experience-studio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/api-client.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/experience.css", import.meta.url), "utf8"),
   ]);
   assert.match(workflow, /optimize_finding/);
   assert.match(workflow, /optimize_all/);
@@ -74,6 +75,10 @@ test("supports AI compliance optimization and recheck", async () => {
   assert.match(workflow, /replacementZh/);
   assert.match(component, /AI 一键优化全部并复检/);
   assert.match(component, /AI 优化此项并复检/);
+  assert.match(component, /risk-list/);
+  assert.match(component, /risk-actions/);
+  assert.match(styles, /\.risk-list\{[^}]*overflow-y:auto/);
+  assert.match(styles, /\.result-canvas\{[^}]*overflow:auto/);
   assert.match(client, /findingId/);
 });
 
