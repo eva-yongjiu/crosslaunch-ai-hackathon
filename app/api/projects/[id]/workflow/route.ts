@@ -3,14 +3,15 @@ import { coverageFor, scanListing } from "../../../../lib/compliance";
 import { assertModelRouterConfigured, chatJson, generateImage, modelMode, visionJson } from "../../../../lib/model-router";
 import { ruleSources } from "../../../../lib/rules";
 import { getStoredObject, putStoredObject } from "../../../../lib/storage";
-import type { AssetVersion, Channel, ChannelListing, ComplianceFinding, DetailModule, GenerationTask, ProductFact, ProjectWorkspace } from "../../../../lib/domain";
+import type { AssetVersion, Channel, ChannelListing, ComplianceFinding, ComplianceLocation, DetailModule, GenerationTask, ProductFact, ProjectWorkspace } from "../../../../lib/domain";
 import { normalizeWorkspace } from "../../../../lib/workspace";
 
-type Action = "analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "regenerate_asset";
+type Action = "analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "optimize_finding" | "optimize_all" | "regenerate_asset";
 type VisionResult = { category?: string; categoryZh?: string; categoryConfidence?: number; facts?: Array<{ name: string; nameZh?: string; value: string; valueZh?: string; confidence?: number }>; identityLocks?: string[]; missingInformation?: string[]; missingInformationZh?: string[] };
 type VisualReviewResult = { passed?: boolean; consistencyScore?: number; findings?: Array<{ excerpt?: string; excerptZh?: string; severity?: "high" | "medium" | "low"; explanation?: string; explanationZh?: string; suggestion?: string; suggestionZh?: string; bbox?: [number, number, number, number] }> };
 type GeneratedContent = { listings: ChannelListing[]; details: Partial<Record<Channel, DetailModule[]>> };
 type TranslationResult = { categoryZh?: string; missingInformationZh?: string[]; facts?: Array<{ id?: string; nameZh?: string; valueZh?: string }>; listings?: Array<{ channel: Channel; titleZh?: string; bulletsZh?: string[]; descriptionZh?: string; searchTermsZh?: string; metaTitleZh?: string; metaDescriptionZh?: string }>; details?: Partial<Record<Channel, Array<{ id: string; titleZh?: string; bodyZh?: string }>>> };
+type RewriteResult = { replacement?: unknown; replacementZh?: unknown };
 
 async function persist(workspace: ProjectWorkspace, reason: string) {
   const { saveWorkspace } = await import("../../../../lib/repository");
@@ -38,9 +39,14 @@ async function sourceImageDataUrl(workspace: ProjectWorkspace) {
 function makeTask(id: string, action: Action): GenerationTask {
   return {
     id: crypto.randomUUID(), projectId: id,
-    type: action === "scan" || action === "apply_fixes" ? "compliance" : action === "generate" || action === "regenerate_asset" ? "assets" : action === "translate" ? "listing" : "analyze",
+    type: action === "scan" || action === "apply_fixes" || action === "optimize_finding" || action === "optimize_all" ? "compliance" : action === "generate" || action === "regenerate_asset" ? "assets" : action === "translate" ? "listing" : "analyze",
     mode: modelMode(), status: "running", retries: 0, inputSummary: action, startedAt: new Date().toISOString(),
   };
+}
+
+function outputText(value: unknown, separator = " "): string {
+  if (Array.isArray(value)) return value.map((item) => outputText(item)).filter(Boolean).join(separator);
+  return typeof value === "string" ? value : value === null || value === undefined ? "" : String(value);
 }
 
 function removeUnsupportedClaims(workspace: ProjectWorkspace) {
@@ -59,9 +65,10 @@ const assetPrompts: Record<AssetVersion["kind"], string> = {
   size: "technical size and specification infographic using only the supplied verified facts",
 };
 
-async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel, kind: AssetVersion["kind"], sourceImage: string, version: number, replacedFromId?: string, retries = 0): Promise<AssetVersion> {
+async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel, kind: AssetVersion["kind"], sourceImage: string, version: number, replacedFromId?: string, retries = 0, correction?: string): Promise<AssetVersion> {
   const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.name}: ${fact.value}`).join("; ");
-  const prompt = `Use the supplied product photo as the authoritative visual reference. Create a ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. Do not invent specifications, certifications, extra accessories or packaging. Keep the image understandable for a Chinese-English operator: no text on the main, scene, or model image; if comparison or size text is necessary, use short, accurate English and Simplified Chinese pairs only.`;
+  const correctionText = correction ? `A compliance review found this issue. Correct it in this new version: ${correction}. Do not preserve the flagged text, object, claim or visual error.` : "";
+  const prompt = `Use the supplied product photo as the authoritative visual reference. Create a ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. Do not invent specifications, certifications, extra accessories or packaging. Keep the image understandable for a Chinese-English operator: no text on the main, scene, or model image; if comparison or size text is necessary, use short, accurate English and Simplified Chinese pairs only. ${correctionText}`;
   const result = await generateImage(prompt, "2048*2048", sourceImage);
   const remoteUrl = result.data?.[0]?.url;
   const encoded = result.data?.[0]?.b64_json;
@@ -111,9 +118,10 @@ async function reviewAssets(workspace: ProjectWorkspace): Promise<ComplianceFind
       image,
     );
     asset.consistencyScore = Math.max(0, Math.min(1, review.consistencyScore ?? (review.passed ? 1 : 0)));
-    asset.complianceStatus = review.passed ? "passed" : "failed";
     const sourceId = asset.channel === "amazon-us" ? "amazon-images" : asset.channel === "tiktok-us" ? "tiktok-listing" : "shopify-media";
-    for (const [index, issue] of (review.findings ?? []).entries()) {
+    const actionableFindings = (review.findings ?? []).filter((issue) => review.passed === false || issue.severity === "high" || issue.severity === "medium" || issue.severity === "low");
+    asset.complianceStatus = review.passed && actionableFindings.length === 0 ? "passed" : "failed";
+    for (const [index, issue] of actionableFindings.entries()) {
       findings.push({
         id: `finding_asset_${asset.id}_${index}`,
         ruleId: "visual-asset-review",
@@ -136,9 +144,117 @@ async function reviewAssets(workspace: ProjectWorkspace): Promise<ComplianceFind
   return findings;
 }
 
+function locationKey(location: ComplianceLocation) {
+  if (location.kind === "asset") return `asset:${location.assetId ?? ""}`;
+  return `${location.kind}:${location.channel}:${location.field ?? ""}:${location.index ?? ""}`;
+}
+
+function verifiedFacts(workspace: ProjectWorkspace) {
+  return workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => ({ id: fact.id, name: fact.name, nameZh: fact.nameZh, value: fact.value, valueZh: fact.valueZh }));
+}
+
+async function optimizeListingLocation(workspace: ProjectWorkspace, findings: ComplianceFinding[]) {
+  const location = findings[0]?.location;
+  if (!location || (location.kind !== "listing" && location.kind !== "detail")) throw new Error("这条风险记录没有可编辑的文字定位，请先重新检测。" );
+  const source = workspace.sources.find((item) => item.id === findings[0].sourceId);
+  const issueSummary = findings.map((finding) => ({ excerpt: finding.excerpt, explanation: finding.explanation, suggestion: finding.suggestion, excerptZh: finding.excerptZh, explanationZh: finding.explanationZh, suggestionZh: finding.suggestionZh }));
+  let english = "";
+  let chinese = "";
+  if (location.kind === "listing") {
+    const listing = workspace.listings.find((item) => item.channel === location.channel);
+    if (!listing) throw new Error("对应渠道 Listing 不存在，请先重新生成内容。" );
+    switch (location.field) {
+      case "title": english = listing.title; chinese = listing.titleZh ?? ""; break;
+      case "bullet": english = listing.bullets[location.index ?? 0] ?? ""; chinese = listing.bulletsZh?.[location.index ?? 0] ?? ""; break;
+      case "description": english = listing.description; chinese = listing.descriptionZh ?? ""; break;
+      case "searchTerms": english = listing.searchTerms ?? ""; chinese = listing.searchTermsZh ?? ""; break;
+      case "metaTitle": english = listing.metaTitle ?? ""; chinese = listing.metaTitleZh ?? ""; break;
+      case "metaDescription": english = listing.metaDescription ?? ""; chinese = listing.metaDescriptionZh ?? ""; break;
+      default: throw new Error("当前文字风险缺少可编辑字段，请先重新检测。" );
+    }
+  } else {
+    const detailModule = (workspace.details[location.channel] ?? [])[location.index ?? 0];
+    if (!detailModule) throw new Error("对应详情页模块不存在，请先重新生成详情页。" );
+    if (location.field === "detailTitle") { english = detailModule.title; chinese = detailModule.titleZh ?? ""; }
+    else if (location.field === "detailBody") { english = detailModule.body; chinese = detailModule.bodyZh ?? ""; }
+    else throw new Error("当前详情页风险缺少可编辑字段，请先重新检测。" );
+  }
+  if (!english.trim()) throw new Error("目标文字为空，无法执行 AI 优化。" );
+  const rewritten = await chatJson<RewriteResult>(
+    "You are a US ecommerce compliance editor. Return strict JSON with exactly replacement and replacementZh. Rewrite only the supplied field, not the whole listing. The English replacement is for US publishing and the Simplified Chinese replacement is for operator review. Use only verified facts. Remove unsupported measurements, certifications, efficacy, guarantees, rankings, superlatives and absolute or environmentally sensitive claims unless they are explicitly supported by the verified facts. Do not add new facts, new accessories or promises. Keep the meaning useful and natural. If the field is a search term field, return concise search phrases rather than a sentence.",
+    JSON.stringify({ channel: location.channel, kind: location.kind, field: location.field, originalEnglish: english, originalChinese: chinese, risks: issueSummary, officialRule: source ? { title: source.title, excerpt: source.excerpt, version: source.version, url: source.url } : undefined, verifiedFacts: verifiedFacts(workspace) }),
+  );
+  const replacement = outputText(rewritten.replacement).trim();
+  if (!replacement) throw new Error("AI 没有返回可用的合规改写内容。" );
+  const replacementZh = outputText(rewritten.replacementZh).trim() || chinese || replacement;
+  if (location.kind === "listing") {
+    const listing = workspace.listings.find((item) => item.channel === location.channel);
+    if (!listing) throw new Error("对应渠道 Listing 不存在，请先重新生成内容。" );
+    const nextListing: ChannelListing = { ...listing };
+    switch (location.field) {
+      case "title": nextListing.title = replacement; nextListing.titleZh = replacementZh; break;
+      case "bullet": {
+        const index = location.index ?? 0;
+        nextListing.bullets = listing.bullets.map((item, itemIndex) => itemIndex === index ? replacement : item);
+        const bulletsZh = [...(listing.bulletsZh ?? listing.bullets.map(() => ""))];
+        while (bulletsZh.length < nextListing.bullets.length) bulletsZh.push("");
+        bulletsZh[index] = replacementZh;
+        nextListing.bulletsZh = bulletsZh;
+        break;
+      }
+      case "description": nextListing.description = replacement; nextListing.descriptionZh = replacementZh; break;
+      case "searchTerms": nextListing.searchTerms = replacement; nextListing.searchTermsZh = replacementZh; break;
+      case "metaTitle": nextListing.metaTitle = replacement; nextListing.metaTitleZh = replacementZh; break;
+      case "metaDescription": nextListing.metaDescription = replacement; nextListing.metaDescriptionZh = replacementZh; break;
+      default: throw new Error("当前文字风险缺少可编辑字段，请先重新检测。" );
+    }
+    const oldText = english;
+    if (oldText) nextListing.claims = listing.claims.filter((claim) => !(oldText.includes(outputText(claim.text)) && !replacement.includes(outputText(claim.text))));
+    workspace.listings = workspace.listings.map((item) => item.channel === listing.channel ? nextListing : item);
+  } else {
+    const modules = workspace.details[location.channel] ?? [];
+    const index = location.index ?? 0;
+    workspace.details = { ...workspace.details, [location.channel]: modules.map((module, moduleIndex) => moduleIndex !== index ? module : location.field === "detailTitle" ? { ...module, title: replacement, titleZh: replacementZh } : { ...module, body: replacement, bodyZh: replacementZh }) };
+  }
+}
+
+async function optimizeAssetLocation(workspace: ProjectWorkspace, findings: ComplianceFinding[]) {
+  const location = findings[0]?.location;
+  if (!location || location.kind !== "asset" || !location.assetId) throw new Error("这条图片风险没有可编辑的素材定位，请先重新检测。" );
+  const current = workspace.assets.find((asset) => asset.id === location.assetId);
+  if (!current) throw new Error("对应图片不存在，可能已被替换；请重新检测后再优化。" );
+  const sourceImage = await sourceImageDataUrl(workspace);
+  const correction = findings.map((finding) => `${finding.excerpt}；${finding.explanation}；建议：${finding.suggestion}`).join("\n");
+  const replacement = await generateSingleAsset(workspace, current.channel, current.kind, sourceImage, current.version + 1, current.id, current.retries + 1, correction);
+  workspace.assets = workspace.assets.map((asset) => asset.id === current.id ? replacement : asset);
+}
+
+async function optimizeFindings(workspace: ProjectWorkspace, findings: ComplianceFinding[]) {
+  const groups = new Map<string, ComplianceFinding[]>();
+  for (const finding of findings) {
+    if (!finding.location) continue;
+    const key = locationKey(finding.location);
+    groups.set(key, [...(groups.get(key) ?? []), finding]);
+  }
+  if (!groups.size) throw new Error("旧版检测记录无法精确优化，请先重新运行规则检测。" );
+  for (const group of groups.values()) {
+    if (group[0].location?.kind === "asset") await optimizeAssetLocation(workspace, group);
+    else await optimizeListingLocation(workspace, group);
+  }
+}
+
+async function runComplianceScan(workspace: ProjectWorkspace) {
+  const listingFindings = workspace.listings.flatMap((listing) => scanListing(listing, workspace.truth));
+  const assetFindings = await reviewAssets(workspace);
+  workspace.findings = [...listingFindings, ...assetFindings];
+  workspace.project.coverage = Object.fromEntries(workspace.project.channels.map((channel) => [channel, coverageFor(workspace.truth.category, channel)])) as ProjectWorkspace["project"]["coverage"];
+  workspace.project.currentStep = "compliance";
+  workspace.project.status = workspace.findings.length ? "needs_review" : "completed";
+}
+
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const body = await request.json().catch(() => ({})) as { action?: Action; workspace?: ProjectWorkspace; channel?: Channel; assetId?: string };
+  const body = await request.json().catch(() => ({})) as { action?: Action; workspace?: ProjectWorkspace; channel?: Channel; assetId?: string; findingId?: string };
   if (!body.action) return Response.json({ error: "缺少工作流动作。" }, { status: 400 });
   let workspace = body.workspace;
   if (!workspace) {
@@ -218,21 +334,21 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       workspace.project.currentStep = "compliance";
       workspace.project.status = "needs_review";
     } else if (action === "scan") {
-      const listingFindings = workspace.listings.flatMap((listing) => scanListing(listing, workspace!.truth));
-      const assetFindings = await reviewAssets(workspace);
-      workspace.findings = [...listingFindings, ...assetFindings];
-      workspace.project.coverage = Object.fromEntries(workspace.project.channels.map((channel) => [channel, coverageFor(workspace!.truth.category, channel)])) as ProjectWorkspace["project"]["coverage"];
-      workspace.project.currentStep = "compliance";
-      workspace.project.status = workspace.findings.length ? "needs_review" : "completed";
+      await runComplianceScan(workspace);
+    } else if (action === "optimize_finding" || action === "optimize_all") {
+      assertModelRouterConfigured();
+      const targets = action === "optimize_finding"
+        ? [workspace.findings.find((finding) => finding.id === body.findingId && finding.status === "open")].filter((finding): finding is ComplianceFinding => Boolean(finding))
+        : workspace.findings.filter((finding) => finding.status === "open");
+      if (!targets.length) throw new Error(action === "optimize_finding" ? "找不到待优化的风险记录，请先重新检测。" : "当前没有待优化的风险记录。" );
+      if (action === "optimize_finding" && !targets[0].location) throw new Error("旧版检测记录无法精确优化，请先重新运行规则检测。" );
+      await optimizeFindings(workspace, targets);
+      await runComplianceScan(workspace);
     } else {
       removeUnsupportedClaims(workspace);
-      const listingFindings = workspace.listings.flatMap((listing) => scanListing(listing, workspace!.truth));
-      const assetFindings = await reviewAssets(workspace);
-      workspace.findings = [...listingFindings, ...assetFindings];
-      workspace.project.currentStep = "compliance";
-      workspace.project.status = workspace.findings.some((finding) => finding.severity === "high") ? "needs_review" : "completed";
+      await runComplianceScan(workspace);
     }
-    Object.assign(task, { status: "completed", outputSummary: action === "regenerate_asset" ? "单张素材已重新生成，等待合规复检" : "工作流已真实执行并保存", completedAt: new Date().toISOString() });
+    Object.assign(task, { status: "completed", outputSummary: action === "regenerate_asset" ? "单张素材已重新生成，等待合规复检" : action === "optimize_finding" ? "单项风险已由 AI 优化并完成复检" : action === "optimize_all" ? "全部可定位风险已由 AI 优化并完成复检" : "工作流已真实执行并保存", completedAt: new Date().toISOString() });
     workspace.sources = ruleSources;
     workspace.project.updatedAt = new Date().toISOString();
     await persist(workspace, `工作流：${action}`);

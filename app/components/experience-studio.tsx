@@ -18,7 +18,7 @@ export function ExperienceStudio() {
   const [channel, setChannel] = useState<Channel>("amazon-us");
   const [view, setView] = useState<CreateView>("listing");
   const [busy, setBusy] = useState(false);
-  const [activeAction, setActiveAction] = useState<"analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "regenerate_asset" | null>(null);
+  const [activeAction, setActiveAction] = useState<"analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "optimize_finding" | "optimize_all" | "regenerate_asset" | null>(null);
   const [savedFingerprint, setSavedFingerprint] = useState("");
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -70,15 +70,15 @@ export function ExperienceStudio() {
     }).catch((cause) => setError(errorText(cause)));
   }, []);
 
-  const execute = async (action: "analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "regenerate_asset", next?: Space, assetId?: string) => {
+  const execute = async (action: "analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "optimize_finding" | "optimize_all" | "regenerate_asset", next?: Space, assetId?: string, findingId?: string) => {
     if (!workspace) return;
     setBusy(true); setActiveAction(action); setError(""); setMessage("");
     try {
-      const result = await runWorkflow(workspace.project.id, action, workspace, action === "generate" ? channel : undefined, assetId);
+      const result = await runWorkflow(workspace.project.id, action, workspace, action === "generate" ? channel : undefined, assetId, findingId);
       setSavedWorkspace(result.workspace);
       setProjects((items) => items.map((item) => item.id === result.workspace.project.id ? result.workspace.project : item));
       if (next) setSpace(next);
-      setMessage(action === "regenerate_asset" ? "单张素材已重新生成，请重新运行合规检查。" : action === "translate" ? "中英双语译稿已生成并保存。" : action === "scan" || action === "apply_fixes" ? "合规检查已执行并保存。" : "操作已执行并保存。" );
+      setMessage(action === "regenerate_asset" ? "单张素材已重新生成，请重新运行合规检查。" : action === "optimize_finding" ? "AI 已优化该问题并完成重新检测。" : action === "optimize_all" ? "AI 已优化全部可定位风险并完成重新检测。" : action === "translate" ? "中英双语译稿已生成并保存。" : action === "scan" || action === "apply_fixes" ? "合规检查已执行并保存。" : "操作已执行并保存。" );
     } catch (cause) { setError(errorText(cause)); }
     finally { setBusy(false); setActiveAction(null); }
   };
@@ -138,7 +138,7 @@ export function ExperienceStudio() {
       finally { setBusy(false); }
     }} onAnalyze={() => execute("analyze")} onConfirm={() => execute("confirm_truth", "create")} onSave={() => save("编辑商品事实")} />}
     {workspace && space === "create" && <CreationStudio workspace={workspace} setWorkspace={setWorkspace} channel={channel} setChannel={setChannel} view={view} setView={setView} busy={busy} aiReady={Boolean(runtime?.modelRouter.configured)} hasUnsavedChanges={hasUnsavedChanges} outputLanguage={workspace.outputLanguage ?? "bilingual"} focusTarget={focusTarget} onLanguageChange={changeOutputLanguage} onTranslate={() => execute("translate")} onGenerate={() => execute("generate")} onRegenerateAsset={(assetId) => execute("regenerate_asset", undefined, assetId)} onReplaceAsset={replaceAsset} onSave={() => save("编辑渠道内容")} onCompliance={() => setSpace("compliance")} />}
-    {workspace && space === "compliance" && <ComplianceCenter workspace={workspace} busy={busy} onScan={() => execute("scan")} onFix={() => execute("apply_fixes")} onLocate={locateFinding} />}
+    {workspace && space === "compliance" && <ComplianceCenter workspace={workspace} busy={busy} aiReady={Boolean(runtime?.modelRouter.configured)} onScan={() => execute("scan")} onFix={() => execute("apply_fixes")} onOptimizeFinding={(finding) => execute("optimize_finding", undefined, undefined, finding.id)} onOptimizeAll={() => execute("optimize_all")} onLocate={locateFinding} />}
   </main>;
 }
 
@@ -209,7 +209,7 @@ function PagePreview({ workspace, channel }: { workspace: ProjectWorkspace; chan
   return <div className="page-browser"><header><i /><i /><i /><span>{channelNames[channel]} / 中英双语预览</span></header>{modules.map((module) => <section className="real-module" key={module.id}><small>{module.type}</small><h2>{module.title}</h2><p>{module.body}</p><div className="module-translation"><b>中文对照</b><h3>{module.titleZh || "中文标题尚未生成"}</h3><p>{module.bodyZh || "中文译稿尚未生成，请重新生成该渠道内容。"}</p></div></section>)}</div>;
 }
 
-function ComplianceCenter({ workspace, busy, onScan, onFix, onLocate }: { workspace: ProjectWorkspace; busy: boolean; onScan: () => void; onFix: () => void; onLocate: (finding: ComplianceFinding) => void }) {
+function ComplianceCenter({ workspace, busy, aiReady, onScan, onFix, onOptimizeFinding, onOptimizeAll, onLocate }: { workspace: ProjectWorkspace; busy: boolean; aiReady: boolean; onScan: () => void; onFix: () => void; onOptimizeFinding: (finding: ComplianceFinding) => void; onOptimizeAll: () => void; onLocate: (finding: ComplianceFinding) => void }) {
   const open = workspace.findings.filter((finding) => finding.status === "open");
   const high = open.filter((finding) => finding.severity === "high");
   const failedAssets = workspace.assets.filter((asset) => asset.complianceStatus === "failed");
@@ -217,8 +217,8 @@ function ComplianceCenter({ workspace, busy, onScan, onFix, onLocate }: { worksp
   const canExport = Boolean(workspace.truth.confirmedAt) && workspace.listings.every((listing) => listing.title.trim()) && high.length === 0 && unreviewedAssets.length === 0;
   return <section className="focused-space publish-space"><SpaceIntro number="03" label="COMPLIANCE & EXPORT" title="检测结果必须有依据，导出必须过门禁。" text="规则扫描使用当前保存内容。没有专项规则包的品类只显示部分覆盖，不会声称完全合规。" />
     <div className="publish-overview"><div className="readiness-copy"><span>{open.length ? "需要处理" : "等待检测或已通过"}</span><h2>{open.length ? `${open.length} 项风险` : "当前没有未处理发现"}</h2><p>此功能是风险筛查工具，不替代平台审核、检测认证或法律意见。{failedAssets.length ? ` ${failedAssets.length} 张图片需要重新生成或替换。` : ""}</p></div><button className="main-action" disabled={busy || workspace.listings.some((listing) => !listing.title.trim())} onClick={onScan}>{busy ? "检测中…" : "运行真实规则检测"}</button></div>
-    <div className="publish-grid"><section className="channel-readiness"><header><span>规则覆盖</span><small>United States</small></header>{workspace.project.channels.map((item) => <article key={item}><div className="channel-logo">{channelNames[item][0]}</div><div><h3>{channelNames[item]}</h3><p>{coverageName(workspace.project.coverage[item])}</p></div></article>)}</section><section className="risk-focus"><header><span>检测发现</span><small>{open.length} 项</small></header>{open.length ? open.map((finding) => { const source = workspace.sources.find((item) => item.id === finding.sourceId); return <article key={finding.id}><i className={finding.severity}>!</i><div><span>{finding.severity.toUpperCase()} · {finding.location ? locationLabel(finding.location) : finding.target}</span><h3>{finding.excerpt}</h3><p className="finding-translation">中文：{finding.excerptZh || finding.excerpt}</p><p>{finding.explanationZh || finding.explanation}</p><strong>建议：{finding.suggestionZh || finding.suggestion}</strong><div className="finding-actions">{finding.location ? <button type="button" className="finding-locate" onClick={() => onLocate(finding)}>定位并编辑：{locationLabel(finding.location)} →</button> : <span className="finding-legacy">旧版记录，请重新检测后定位</span>}{source ? <a href={source.url} target="_blank" rel="noreferrer">查看规则来源 ↗</a> : <span>规则来源缺失</span>}</div></div></article>; }) : <div className="empty-panel"><b>暂无风险记录</b><p>请运行检测；空记录不等同于已完成合规审查。</p></div>}</section></div>
-    <div className="launch-bar"><div><span>最终交付包</span><b>Listing · 详情页 · 图片文件 · 合规报告 · 生成记录</b></div>{open.length && !failedAssets.length ? <button className="main-action" onClick={onFix} disabled={busy}>删除不支持宣称并复检</button> : canExport ? <a className="main-action" href={`/api/projects/${workspace.project.id}/export`}>下载真实项目 ZIP →</a> : <button className="main-action" disabled>{failedAssets.length ? "请重新生成或替换图片后复检" : "完成事实确认、内容和图片复检后可导出"}</button>}</div>
+    <div className="publish-grid"><section className="channel-readiness"><header><span>规则覆盖</span><small>United States</small></header>{workspace.project.channels.map((item) => <article key={item}><div className="channel-logo">{channelNames[item][0]}</div><div><h3>{channelNames[item]}</h3><p>{coverageName(workspace.project.coverage[item])}</p></div></article>)}</section><section className="risk-focus"><header><span>检测发现</span><small>{open.length} 项</small></header>{open.length ? open.map((finding) => { const source = workspace.sources.find((item) => item.id === finding.sourceId); return <article key={finding.id}><i className={finding.severity}>!</i><div><span>{finding.severity.toUpperCase()} · {finding.location ? locationLabel(finding.location) : finding.target}</span><h3>{finding.excerpt}</h3><p className="finding-translation">中文：{finding.excerptZh || finding.excerpt}</p><p>{finding.explanationZh || finding.explanation}</p><strong>建议：{finding.suggestionZh || finding.suggestion}</strong><div className="finding-actions">{finding.location ? <><button type="button" className="finding-locate" onClick={() => onLocate(finding)}>定位并编辑：{locationLabel(finding.location)} →</button><button type="button" className="finding-optimize" disabled={busy || !aiReady} onClick={() => onOptimizeFinding(finding)}>{aiReady ? "AI 优化此项并复检" : "配置 AI 后可优化"}</button></> : <span className="finding-legacy">旧版记录，请重新检测后定位</span>}{source ? <a href={source.url} target="_blank" rel="noreferrer">查看规则来源 ↗</a> : <span>规则来源缺失</span>}</div></div></article>; }) : <div className="empty-panel"><b>暂无风险记录</b><p>请运行检测；空记录不等同于已完成合规审查。</p></div>}</section></div>
+    <div className="launch-bar"><div><span>最终交付包</span><b>Listing · 详情页 · 图片文件 · 合规报告 · 生成记录</b><small>人工处理可定位后直接编辑保存；AI 会按风险逐项优化并自动重新检测。</small></div>{open.length ? <div className="optimization-actions"><button className="main-action" onClick={onOptimizeAll} disabled={busy || !aiReady}>{busy ? "AI 优化并复检中…" : aiReady ? "AI 一键优化全部并复检 →" : "配置 AI 后可一键优化"}</button><button className="secondary-action" onClick={onFix} disabled={busy}>仅清理文字并复检</button></div> : canExport ? <a className="main-action" href={`/api/projects/${workspace.project.id}/export`}>下载真实项目 ZIP →</a> : <button className="main-action" disabled>{failedAssets.length ? "请重新生成或替换图片后复检" : "完成事实确认、内容和图片复检后可导出"}</button>}</div>
   </section>;
 }
 

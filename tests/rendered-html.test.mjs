@@ -62,6 +62,21 @@ test("supports bilingual AI output and precise compliance locations", async () =
   assert.match(workflow, /const assetFindings = await reviewAssets\(workspace\)/);
 });
 
+test("supports AI compliance optimization and recheck", async () => {
+  const [workflow, component, client] = await Promise.all([
+    readFile(new URL("../app/api/projects/[id]/workflow/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/experience-studio.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/api-client.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(workflow, /optimize_finding/);
+  assert.match(workflow, /optimize_all/);
+  assert.match(workflow, /runComplianceScan/);
+  assert.match(workflow, /replacementZh/);
+  assert.match(component, /AI 一键优化全部并复检/);
+  assert.match(component, /AI 优化此项并复检/);
+  assert.match(client, /findingId/);
+});
+
 test("does not silently fall back to fixture data", async () => {
   const files = await Promise.all([
     readFile(new URL("../app/lib/api-client.ts", import.meta.url), "utf8"),
