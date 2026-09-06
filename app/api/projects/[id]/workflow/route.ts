@@ -220,12 +220,12 @@ async function optimizeListingLocation(workspace: ProjectWorkspace, findings: Co
   }
 }
 
-async function optimizeAssetLocation(workspace: ProjectWorkspace, findings: ComplianceFinding[]) {
+async function optimizeAssetLocation(workspace: ProjectWorkspace, findings: ComplianceFinding[], explicitRetry = false) {
   const location = findings[0]?.location;
   if (!location || location.kind !== "asset" || !location.assetId) throw new Error("这条图片风险没有可编辑的素材定位，请先重新检测。" );
   const current = workspace.assets.find((asset) => asset.id === location.assetId);
   if (!current) throw new Error("对应图片不存在，可能已被替换；请重新检测后再优化。" );
-  if (current.retries >= maxAutomaticAssetRetries) return false;
+  if (!explicitRetry && current.retries >= maxAutomaticAssetRetries) return false;
   const sourceImage = await sourceImageDataUrl(workspace);
   const correction = findings.map((finding) => `${finding.excerpt}；${finding.explanation}；建议：${finding.suggestion}`).join("\n");
   const replacement = await generateSingleAsset(workspace, current.channel, current.kind, sourceImage, current.version + 1, current.id, current.retries + 1, correction);
@@ -242,7 +242,7 @@ async function optimizeFindings(workspace: ProjectWorkspace, findings: Complianc
   }
   if (!groups.size) throw new Error("旧版检测记录无法精确优化，请先重新运行规则检测。" );
   for (const group of groups.values()) {
-    if (group[0].location?.kind === "asset") await optimizeAssetLocation(workspace, group);
+    if (group[0].location?.kind === "asset") await optimizeAssetLocation(workspace, group, true);
     else await optimizeListingLocation(workspace, group);
   }
 }
