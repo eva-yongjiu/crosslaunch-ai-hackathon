@@ -63,6 +63,7 @@ export interface ChannelProfile {
 
 export interface ClaimLink {
   text: string;
+  claimZh?: string;
   factIds: string[];
   needsEvidence: boolean;
   intent: string;

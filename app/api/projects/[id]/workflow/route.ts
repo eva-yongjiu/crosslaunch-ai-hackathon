@@ -4,6 +4,7 @@ import { assertModelRouterConfigured, chatJson, generateImage, modelMode, vision
 import { ruleSources } from "../../../../lib/rules";
 import { getStoredObject, putStoredObject } from "../../../../lib/storage";
 import type { AssetVersion, Channel, ChannelListing, ComplianceFinding, DetailModule, GenerationTask, ProductFact, ProjectWorkspace } from "../../../../lib/domain";
+import { normalizeWorkspace } from "../../../../lib/workspace";
 
 type Action = "analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "regenerate_asset";
 type VisionResult = { category?: string; categoryZh?: string; categoryConfidence?: number; facts?: Array<{ name: string; nameZh?: string; value: string; valueZh?: string; confidence?: number }>; identityLocks?: string[]; missingInformation?: string[]; missingInformationZh?: string[] };
@@ -145,6 +146,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     workspace = await getWorkspace(id) ?? undefined;
   }
   if (!workspace || workspace.project.id !== id) return Response.json({ error: "项目不存在或 ID 不匹配。" }, { status: 404 });
+  workspace = normalizeWorkspace(workspace);
   const action = body.action;
   const task = makeTask(id, action);
   workspace.tasks = [...workspace.tasks, task];
@@ -224,7 +226,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       workspace.project.status = workspace.findings.length ? "needs_review" : "completed";
     } else {
       removeUnsupportedClaims(workspace);
-      workspace.findings = workspace.listings.flatMap((listing) => scanListing(listing, workspace!.truth));
+      const listingFindings = workspace.listings.flatMap((listing) => scanListing(listing, workspace!.truth));
+      const assetFindings = await reviewAssets(workspace);
+      workspace.findings = [...listingFindings, ...assetFindings];
       workspace.project.currentStep = "compliance";
       workspace.project.status = workspace.findings.some((finding) => finding.severity === "high") ? "needs_review" : "completed";
     }
