@@ -72,6 +72,8 @@ test("supports AI compliance optimization and recheck", async () => {
   assert.match(workflow, /optimize_finding/);
   assert.match(workflow, /optimize_all/);
   assert.match(workflow, /runComplianceScan/);
+  assert.match(workflow, /retryFailedAssets/);
+  assert.match(workflow, /maxAutomaticAssetRetries/);
   assert.match(workflow, /replacementZh/);
   assert.match(component, /AI 一键优化全部并复检/);
   assert.match(component, /AI 优化此项并复检/);

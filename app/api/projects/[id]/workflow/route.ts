@@ -64,11 +64,13 @@ const assetPrompts: Record<AssetVersion["kind"], string> = {
   comparison: "clean comparison infographic using only the supplied verified facts",
   size: "technical size and specification infographic using only the supplied verified facts",
 };
+const maxAutomaticAssetRetries = 2;
 
 async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel, kind: AssetVersion["kind"], sourceImage: string, version: number, replacedFromId?: string, retries = 0, correction?: string): Promise<AssetVersion> {
   const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.name}: ${fact.value}`).join("; ");
   const correctionText = correction ? `A compliance review found this issue. Correct it in this new version: ${correction}. Do not preserve the flagged text, object, claim or visual error.` : "";
-  const prompt = `Use the supplied product photo as the authoritative visual reference. Create a ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. Do not invent specifications, certifications, extra accessories or packaging. Keep the image understandable for a Chinese-English operator: no text on the main, scene, or model image; if comparison or size text is necessary, use short, accurate English and Simplified Chinese pairs only. ${correctionText}`;
+  const channelGuardrail = channel === "amazon-us" ? "Amazon US image rule: use a clean product image with no added text, measurements, arrows, badges, borders, watermarks, logos or graphic overlays." : "US channel image rule: use a clean product image with no added promotional text, measurements, arrows, badges, watermarks or graphic overlays.";
+  const prompt = `Use the supplied product photo as the authoritative visual reference. Create a ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. ${channelGuardrail} Do not invent specifications, certifications, extra accessories, props or packaging. Do not add bags, shoes, cups, labels, brand marks or other products unless they are explicitly included in the verified facts. Do not add any new text to the image; remove all text overlays, placeholder text, measurement lines and bilingual annotations unless the text is physically printed on the verified product itself. ${correctionText}`;
   const result = await generateImage(prompt, "2048*2048", sourceImage);
   const remoteUrl = result.data?.[0]?.url;
   const encoded = result.data?.[0]?.b64_json;
@@ -223,10 +225,12 @@ async function optimizeAssetLocation(workspace: ProjectWorkspace, findings: Comp
   if (!location || location.kind !== "asset" || !location.assetId) throw new Error("这条图片风险没有可编辑的素材定位，请先重新检测。" );
   const current = workspace.assets.find((asset) => asset.id === location.assetId);
   if (!current) throw new Error("对应图片不存在，可能已被替换；请重新检测后再优化。" );
+  if (current.retries >= maxAutomaticAssetRetries) return false;
   const sourceImage = await sourceImageDataUrl(workspace);
   const correction = findings.map((finding) => `${finding.excerpt}；${finding.explanation}；建议：${finding.suggestion}`).join("\n");
   const replacement = await generateSingleAsset(workspace, current.channel, current.kind, sourceImage, current.version + 1, current.id, current.retries + 1, correction);
   workspace.assets = workspace.assets.map((asset) => asset.id === current.id ? replacement : asset);
+  return true;
 }
 
 async function optimizeFindings(workspace: ProjectWorkspace, findings: ComplianceFinding[]) {
@@ -240,6 +244,24 @@ async function optimizeFindings(workspace: ProjectWorkspace, findings: Complianc
   for (const group of groups.values()) {
     if (group[0].location?.kind === "asset") await optimizeAssetLocation(workspace, group);
     else await optimizeListingLocation(workspace, group);
+  }
+}
+
+async function retryFailedAssets(workspace: ProjectWorkspace) {
+  for (let attempt = 0; attempt < maxAutomaticAssetRetries; attempt += 1) {
+    const groups = new Map<string, ComplianceFinding[]>();
+    for (const finding of workspace.findings.filter((item) => item.status === "open" && item.location?.kind === "asset")) {
+      const key = locationKey(finding.location!);
+      groups.set(key, [...(groups.get(key) ?? []), finding]);
+    }
+    const retryableGroups = [...groups.values()].filter((group) => {
+      const assetId = group[0].location?.assetId;
+      return Boolean(assetId && workspace.assets.find((asset) => asset.id === assetId && asset.retries < maxAutomaticAssetRetries));
+    });
+    if (!retryableGroups.length) return;
+    for (const group of retryableGroups) await optimizeAssetLocation(workspace, group);
+    await runComplianceScan(workspace);
+    if (!workspace.findings.some((finding) => finding.status === "open" && finding.location?.kind === "asset")) return;
   }
 }
 
@@ -344,11 +366,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (action === "optimize_finding" && !targets[0].location) throw new Error("旧版检测记录无法精确优化，请先重新运行规则检测。" );
       await optimizeFindings(workspace, targets);
       await runComplianceScan(workspace);
+      await retryFailedAssets(workspace);
     } else {
       removeUnsupportedClaims(workspace);
       await runComplianceScan(workspace);
     }
-    Object.assign(task, { status: "completed", outputSummary: action === "regenerate_asset" ? "单张素材已重新生成，等待合规复检" : action === "optimize_finding" ? "单项风险已由 AI 优化并完成复检" : action === "optimize_all" ? "全部可定位风险已由 AI 优化并完成复检" : "工作流已真实执行并保存", completedAt: new Date().toISOString() });
+    const remainingOpen = workspace.findings.filter((finding) => finding.status === "open");
+    const exhaustedAssets = new Set(remainingOpen.filter((finding) => finding.location?.kind === "asset").map((finding) => finding.location?.assetId).filter((assetId): assetId is string => Boolean(assetId && workspace.assets.find((asset) => asset.id === assetId && asset.retries >= maxAutomaticAssetRetries))));
+    const optimizationResult = remainingOpen.length ? `；复检后仍有 ${remainingOpen.length} 项风险${exhaustedAssets.size ? `，${exhaustedAssets.size} 张图片已达到自动重试上限，请人工替换` : "，请继续处理"}` : "，复检已通过";
+    const outputSummary = action === "regenerate_asset" ? "单张素材已重新生成，等待合规复检" : action === "optimize_finding" ? `单项风险已由 AI 优化并完成复检${optimizationResult}` : action === "optimize_all" ? `全部可定位风险已由 AI 优化并完成复检${optimizationResult}` : "工作流已真实执行并保存";
+    Object.assign(task, { status: "completed", outputSummary, completedAt: new Date().toISOString() });
     workspace.sources = ruleSources;
     workspace.project.updatedAt = new Date().toISOString();
     await persist(workspace, `工作流：${action}`);

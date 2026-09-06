@@ -105,7 +105,9 @@ export function ExperienceStudio() {
       setSavedWorkspace(result.workspace);
       setProjects((items) => items.map((item) => item.id === result.workspace.project.id ? result.workspace.project : item));
       if (next) setSpace(next);
-      setMessage(action === "regenerate_asset" ? "单张素材已重新生成，请重新运行合规检查。" : action === "optimize_finding" ? "AI 已优化该问题并完成重新检测。" : action === "optimize_all" ? "AI 已优化全部可定位风险并完成重新检测。" : action === "translate" ? "中英双语译稿已生成并保存。" : action === "scan" || action === "apply_fixes" ? "合规检查已执行并保存。" : "操作已执行并保存。" );
+      const remaining = result.workspace.findings.filter((finding) => finding.status === "open").length;
+      const exhaustedImages = result.workspace.assets.filter((asset) => asset.complianceStatus === "failed" && asset.retries >= 2).length;
+      setMessage(action === "regenerate_asset" ? "单张素材已重新生成，请重新运行合规检查。" : action === "optimize_finding" ? remaining ? `AI 已完成该项优化并复检，但仍有 ${remaining} 项风险${exhaustedImages ? `，${exhaustedImages} 张图片已达到自动重试上限` : ""}。` : "AI 已优化该问题并完成重新检测。" : action === "optimize_all" ? remaining ? `AI 已完成优化并复检，但仍有 ${remaining} 项风险${exhaustedImages ? `，${exhaustedImages} 张图片已达到自动重试上限，请人工替换` : ""}。` : "AI 已优化全部风险并完成重新检测。" : action === "translate" ? "中英双语译稿已生成并保存。" : action === "scan" || action === "apply_fixes" ? "合规检查已执行并保存。" : "操作已执行并保存。" );
     } catch (cause) { setError(errorText(cause)); }
     finally { setBusy(false); setActiveAction(null); }
   };
