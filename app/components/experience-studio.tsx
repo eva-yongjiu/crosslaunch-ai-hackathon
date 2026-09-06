@@ -19,6 +19,7 @@ export function ExperienceStudio() {
   const [view, setView] = useState<CreateView>("listing");
   const [busy, setBusy] = useState(false);
   const [activeAction, setActiveAction] = useState<"analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "optimize_finding" | "optimize_all" | "regenerate_asset" | null>(null);
+  const [runtimeLoading, setRuntimeLoading] = useState(true);
   const [savedFingerprint, setSavedFingerprint] = useState("");
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -29,6 +30,7 @@ export function ExperienceStudio() {
     setSavedFingerprint(workspaceFingerprint(next));
   };
   const hasUnsavedChanges = Boolean(workspace && workspaceFingerprint(workspace) !== savedFingerprint);
+  const aiReady = Boolean(runtime?.modelRouter.configured && !runtimeLoading);
   const changeOutputLanguage = (outputLanguage: OutputLanguage) => {
     if (!workspace || (workspace.outputLanguage ?? "bilingual") === outputLanguage) return;
     setWorkspace({ ...workspace, outputLanguage });
@@ -65,9 +67,34 @@ export function ExperienceStudio() {
   };
 
   useEffect(() => {
-    Promise.all([getRuntimeStatus(), listProjects()]).then(([status, result]) => {
-      setRuntime(status); setProjects(result.projects);
-    }).catch((cause) => setError(errorText(cause)));
+    let disposed = false;
+    const loadRuntime = async () => {
+      setRuntimeLoading(true);
+      try {
+        const status = await getRuntimeStatus();
+        if (!disposed) setRuntime(status);
+      } catch (cause) {
+        if (!disposed) setError(`AI 状态检测失败：${errorText(cause)} 请稍后重试。`);
+      } finally {
+        if (!disposed) setRuntimeLoading(false);
+      }
+    };
+    const loadProjects = async () => {
+      try {
+        const result = await listProjects();
+        if (!disposed) setProjects(result.projects);
+      } catch (cause) {
+        if (!disposed) setError(errorText(cause));
+      }
+    };
+    void loadRuntime();
+    void loadProjects();
+    const refreshRuntimeOnFocus = () => { void loadRuntime(); };
+    window.addEventListener("focus", refreshRuntimeOnFocus);
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", refreshRuntimeOnFocus);
+    };
   }, []);
 
   const execute = async (action: "analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "optimize_finding" | "optimize_all" | "regenerate_asset", next?: Space, assetId?: string, findingId?: string) => {
@@ -121,13 +148,13 @@ export function ExperienceStudio() {
       </nav>
       <div className="experience-head-actions">
         <span className={`live-state ${runtime?.database === "available" ? "d1" : "fixture"}`}>{runtime?.database === "available" ? (runtime.databaseProvider === "d1" ? "D1 已连接" : "本地数据库已连接") : "存储未连接"}</span>
-        <span className={`live-state ${runtime?.modelRouter.configured ? "d1" : "fixture"}`}>{runtime?.modelRouter.configured ? "AI 已连接" : "AI 未配置"}</span>
+        <span className={`live-state ${runtimeLoading ? "fixture" : runtime?.modelRouter.configured ? "d1" : "fixture"}`}>{runtimeLoading ? "AI 状态检测中…" : runtime ? runtime.modelRouter.configured ? "AI 已连接" : "AI 未配置" : "AI 状态未知"}</span>
         {workspace && <button disabled={busy || !hasUnsavedChanges} onClick={() => save()} title={hasUnsavedChanges ? "保存当前修改" : "当前没有新的修改"}>{busy ? "处理中…" : hasUnsavedChanges ? "保存" : "已保存"}</button>}
       </div>
     </header>
     {(error || message) && <div className={`system-banner ${error ? "error" : "success"}`}><span>{error || message}</span><button onClick={() => { setError(""); setMessage(""); }}>×</button></div>}
     {space === "projects" && <ProjectsHome projects={projects} busy={busy} onOpen={openProject} onCreated={(next) => { setSavedWorkspace(next); setProjects((items) => [next.project, ...items]); setChannel(next.project.channels[0]); setSpace("truth"); }} onError={setError} />}
-    {workspace && space === "truth" && <TruthWorkbench workspace={workspace} setWorkspace={setWorkspace} busy={busy} aiReady={Boolean(runtime?.modelRouter.configured)} analyzing={activeAction === "analyze"} hasUnsavedChanges={hasUnsavedChanges} outputLanguage={workspace.outputLanguage ?? "bilingual"} onLanguageChange={changeOutputLanguage} onTranslate={() => execute("translate")} onUpload={async (file) => {
+    {workspace && space === "truth" && <TruthWorkbench workspace={workspace} setWorkspace={setWorkspace} busy={busy} aiReady={aiReady} analyzing={activeAction === "analyze"} hasUnsavedChanges={hasUnsavedChanges} outputLanguage={workspace.outputLanguage ?? "bilingual"} onLanguageChange={changeOutputLanguage} onTranslate={() => execute("translate")} onUpload={async (file) => {
       setBusy(true); setError("");
       try {
         const sourceAsset = await uploadAsset(workspace.project.id, file);
@@ -137,8 +164,8 @@ export function ExperienceStudio() {
       } catch (cause) { setError(errorText(cause)); }
       finally { setBusy(false); }
     }} onAnalyze={() => execute("analyze")} onConfirm={() => execute("confirm_truth", "create")} onSave={() => save("编辑商品事实")} />}
-    {workspace && space === "create" && <CreationStudio workspace={workspace} setWorkspace={setWorkspace} channel={channel} setChannel={setChannel} view={view} setView={setView} busy={busy} aiReady={Boolean(runtime?.modelRouter.configured)} hasUnsavedChanges={hasUnsavedChanges} outputLanguage={workspace.outputLanguage ?? "bilingual"} focusTarget={focusTarget} onLanguageChange={changeOutputLanguage} onTranslate={() => execute("translate")} onGenerate={() => execute("generate")} onRegenerateAsset={(assetId) => execute("regenerate_asset", undefined, assetId)} onReplaceAsset={replaceAsset} onSave={() => save("编辑渠道内容")} onCompliance={() => setSpace("compliance")} />}
-    {workspace && space === "compliance" && <ComplianceCenter workspace={workspace} busy={busy} aiReady={Boolean(runtime?.modelRouter.configured)} onScan={() => execute("scan")} onFix={() => execute("apply_fixes")} onOptimizeFinding={(finding) => execute("optimize_finding", undefined, undefined, finding.id)} onOptimizeAll={() => execute("optimize_all")} onLocate={locateFinding} />}
+    {workspace && space === "create" && <CreationStudio workspace={workspace} setWorkspace={setWorkspace} channel={channel} setChannel={setChannel} view={view} setView={setView} busy={busy} aiReady={aiReady} hasUnsavedChanges={hasUnsavedChanges} outputLanguage={workspace.outputLanguage ?? "bilingual"} focusTarget={focusTarget} onLanguageChange={changeOutputLanguage} onTranslate={() => execute("translate")} onGenerate={() => execute("generate")} onRegenerateAsset={(assetId) => execute("regenerate_asset", undefined, assetId)} onReplaceAsset={replaceAsset} onSave={() => save("编辑渠道内容")} onCompliance={() => setSpace("compliance")} />}
+    {workspace && space === "compliance" && <ComplianceCenter workspace={workspace} busy={busy} aiReady={aiReady} onScan={() => execute("scan")} onFix={() => execute("apply_fixes")} onOptimizeFinding={(finding) => execute("optimize_finding", undefined, undefined, finding.id)} onOptimizeAll={() => execute("optimize_all")} onLocate={locateFinding} />}
   </main>;
 }
 

@@ -18,7 +18,7 @@ test("server-renders the real-data workspace", async () => {
   assert.match(html, /上新无界/);
   assert.match(html, /商品事实/);
   assert.match(html, /真实数据工作台/);
-  assert.match(html, /AI 未配置/);
+  assert.match(html, /AI 未配置|AI 状态检测中/);
   assert.doesNotMatch(html, /演示模式|便携榨汁杯|96%|codex-preview|Your site is taking shape/);
 });
 
@@ -77,6 +77,8 @@ test("supports AI compliance optimization and recheck", async () => {
   assert.match(component, /AI 优化此项并复检/);
   assert.match(component, /risk-list/);
   assert.match(component, /risk-actions/);
+  assert.match(component, /const loadRuntime = async/);
+  assert.doesNotMatch(component, /Promise\.all\(\[getRuntimeStatus\(\), listProjects\(\)\]\)/);
   assert.match(styles, /\.risk-list\{[^}]*overflow-y:auto/);
   assert.match(styles, /\.result-canvas\{[^}]*overflow:auto/);
   assert.match(client, /findingId/);
