@@ -128,9 +128,12 @@ function normalizeFact(value: ProductFact): ProductFact {
   return { ...value, name: textValue(raw.name), nameZh: textValue(raw.nameZh), value: textValue(raw.value), valueZh: textValue(raw.valueZh) };
 }
 
-function normalizeDetailModule(value: DetailModule): DetailModule {
+const detailTypeOrder: DetailModule["type"][] = ["hero", "benefits", "scenario", "specs", "faq", "comparison", "steps", "reason"];
+
+function normalizeDetailModule(value: DetailModule, index = 0): DetailModule {
   const raw = rawRecord(value);
-  return { ...value, title: textValue(raw.title), titleZh: textValue(raw.titleZh), body: textValue(raw.body), bodyZh: textValue(raw.bodyZh), factIds: stringArray(raw.factIds), assetIds: stringArray(raw.assetIds) };
+  const type = detailTypeOrder.includes(raw.type as DetailModule["type"]) ? raw.type as DetailModule["type"] : detailTypeOrder[index] ?? "benefits";
+  return { ...value, type, title: textValue(raw.title), titleZh: textValue(raw.titleZh), body: textValue(raw.body), bodyZh: textValue(raw.bodyZh), factIds: stringArray(raw.factIds), assetIds: stringArray(raw.assetIds) };
 }
 
 export function normalizeWorkspace(workspace: ProjectWorkspace): ProjectWorkspace {
@@ -146,6 +149,6 @@ export function normalizeWorkspace(workspace: ProjectWorkspace): ProjectWorkspac
       missingInformationZh: stringArray(workspace.truth.missingInformationZh),
     },
     listings: workspace.listings.map(normalizeListing),
-    details: Object.fromEntries(Object.entries(workspace.details).map(([channel, modules]) => [channel, (modules ?? []).map(normalizeDetailModule)])) as ProjectWorkspace["details"],
+    details: Object.fromEntries(Object.entries(workspace.details).map(([channel, modules]) => [channel, (modules ?? []).map((module, index) => normalizeDetailModule(module, index))])) as ProjectWorkspace["details"],
   };
 }

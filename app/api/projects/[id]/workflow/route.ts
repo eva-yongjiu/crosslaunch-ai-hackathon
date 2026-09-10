@@ -1,5 +1,6 @@
 import { getAssetRecord, saveAssetRecord } from "../../../../lib/asset-repository";
-import { coverageFor, scanListing } from "../../../../lib/compliance";
+import { assetKindForModule, assetKinds, assetPurpose, assetRequirement } from "../../../../lib/asset-policy";
+import { coverageFor, scanDetail, scanListing } from "../../../../lib/compliance";
 import { assertModelRouterConfigured, chatJson, generateImage, modelMode, visionJson } from "../../../../lib/model-router";
 import { ruleSources } from "../../../../lib/rules";
 import { getStoredObject, putStoredObject } from "../../../../lib/storage";
@@ -8,10 +9,11 @@ import { normalizeWorkspace } from "../../../../lib/workspace";
 
 type Action = "analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "optimize_finding" | "optimize_all" | "regenerate_asset";
 type VisionResult = { category?: string; categoryZh?: string; categoryConfidence?: number; facts?: Array<{ name: string; nameZh?: string; value: string; valueZh?: string; confidence?: number }>; identityLocks?: string[]; missingInformation?: string[]; missingInformationZh?: string[] };
-type VisualReviewResult = { passed?: boolean; consistencyScore?: number; findings?: Array<{ excerpt?: string; excerptZh?: string; severity?: "high" | "medium" | "low"; explanation?: string; explanationZh?: string; suggestion?: string; suggestionZh?: string; bbox?: [number, number, number, number] }> };
+type VisualReviewResult = { passed?: boolean; roleValid?: boolean; roleIssue?: string; roleIssueZh?: string; consistencyScore?: number; findings?: Array<{ excerpt?: string; excerptZh?: string; severity?: "high" | "medium" | "low" | "info" | "error"; explanation?: string; explanationZh?: string; suggestion?: string; suggestionZh?: string; bbox?: [number, number, number, number] }> };
 type GeneratedContent = { listings: ChannelListing[]; details: Partial<Record<Channel, DetailModule[]>> };
 type TranslationResult = { categoryZh?: string; missingInformationZh?: string[]; facts?: Array<{ id?: string; nameZh?: string; valueZh?: string }>; listings?: Array<{ channel: Channel; titleZh?: string; bulletsZh?: string[]; descriptionZh?: string; searchTermsZh?: string; metaTitleZh?: string; metaDescriptionZh?: string }>; details?: Partial<Record<Channel, Array<{ id: string; titleZh?: string; bodyZh?: string }>>> };
 type RewriteResult = { replacement?: unknown; replacementZh?: unknown };
+const generatedDetailTypes: DetailModule["type"][] = ["hero", "benefits", "scenario", "specs", "faq", "comparison", "steps", "reason"];
 
 async function persist(workspace: ProjectWorkspace, reason: string) {
   const { saveWorkspace } = await import("../../../../lib/repository");
@@ -51,26 +53,35 @@ function outputText(value: unknown, separator = " "): string {
 
 function removeUnsupportedClaims(workspace: ProjectWorkspace) {
   const unsupported = workspace.findings.filter((item) => item.status === "open").map((item) => item.excerpt).filter(Boolean);
+  const clean = (value: string) => unsupported.reduce((text, excerpt) => text.replaceAll(excerpt, "").replace(/\s{2,}/g, " ").trim(), value);
   workspace.listings = workspace.listings.map((listing) => {
-    const clean = (value: string) => unsupported.reduce((text, excerpt) => text.replaceAll(excerpt, "").replace(/\s{2,}/g, " ").trim(), value);
     return { ...listing, title: clean(listing.title), bullets: listing.bullets.map(clean).filter(Boolean), description: clean(listing.description), claims: listing.claims.filter((claim) => !unsupported.includes(claim.text)) };
   });
+  workspace.details = Object.fromEntries(Object.entries(workspace.details).map(([channel, modules]) => [channel, modules.map((module) => ({ ...module, title: clean(module.title), body: clean(module.body) }))])) as ProjectWorkspace["details"];
 }
 
 const assetPrompts: Record<AssetVersion["kind"], string> = {
-  main: "clean ecommerce main product image on pure white background, no promotional text",
-  scene: "realistic lifestyle scene showing the product in a credible use context",
-  model: "commercial lifestyle photo with a US-market model naturally using the exact product",
-  comparison: "clean comparison infographic using only the supplied verified facts",
-  size: "technical size and specification infographic using only the supplied verified facts",
+  main: "a clean ecommerce main product image on pure white background, centered and fully visible, with no promotional text",
+  scene: "a realistic lifestyle scene showing the product in one credible use context, with the product large enough to inspect",
+  model: "a commercial lifestyle photo with a US-market model naturally using the exact product; supporting props may appear in the background but must never look like included accessories",
+  comparison: "a clean secondary feature-comparison infographic: show the exact product beside at least two clearly separated, fact-grounded feature callouts",
+  size: "a technical size-and-specification infographic: show the exact product with visible measurement arrows and labels for every supplied dimensional fact",
 };
 const maxAutomaticAssetRetries = 2;
 
 async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel, kind: AssetVersion["kind"], sourceImage: string, version: number, replacedFromId?: string, retries = 0, correction?: string): Promise<AssetVersion> {
-  const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.name}: ${fact.value}`).join("; ");
+  const requirement = assetRequirement(kind, workspace.truth);
+  if (!requirement.ready) throw new Error(`${assetPurpose[kind].nameZh}暂不能生成：${requirement.reasonZh}`);
+  const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.id} | ${fact.name}: ${fact.value}`).join("; ");
   const correctionText = correction ? `A compliance review found this issue. Correct it in this new version: ${correction}. Do not preserve the flagged text, object, claim or visual error.` : "";
-  const channelGuardrail = channel === "amazon-us" ? "Amazon US image rule: use a clean product image with no added text, measurements, arrows, badges, borders, watermarks, logos or graphic overlays." : "US channel image rule: use a clean product image with no added promotional text, measurements, arrows, badges, watermarks or graphic overlays.";
-  const prompt = `Use the supplied product photo as the authoritative visual reference. Create a ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. ${channelGuardrail} Do not invent specifications, certifications, extra accessories, props or packaging. Do not add bags, shoes, cups, labels, brand marks or other products unless they are explicitly included in the verified facts. Do not add any new text to the image; remove all text overlays, placeholder text, measurement lines and bilingual annotations unless the text is physically printed on the verified product itself. ${correctionText}`;
+  const channelGuardrail = kind === "main"
+    ? "For the main image, use only the actual product on a pure white background. Do not add text, measurements, arrows, badges, borders, watermarks, logos, graphics or props."
+    : kind === "comparison"
+      ? "This is a secondary image, so concise callout text is allowed only for the supplied verified facts. Do not compare against an invented competitor or make a performance claim."
+      : kind === "size"
+        ? "This is a secondary image, so measurement arrows and labels are allowed only for the supplied verified dimensional facts. Never estimate or invent a measurement."
+        : "This is a secondary lifestyle image. Do not add promotional text, watermarks or logos. Context props are allowed only when clearly separate from the product and never presented as included in the package.";
+  const prompt = `Use the supplied product photo as the authoritative visual reference. Create ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts with IDs: ${facts}. ${requirement.factIds.length ? `Facts allowed for this role: ${requirement.factIds.join(", ")}.` : ""} Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. ${channelGuardrail} Never invent specifications, certifications, efficacy, performance numbers, extra product copies or packaging. Do not alter the product identity. ${correctionText}`;
   const result = await generateImage(prompt, "2048*2048", sourceImage);
   const remoteUrl = result.data?.[0]?.url;
   const encoded = result.data?.[0]?.b64_json;
@@ -96,12 +107,13 @@ async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel
   const objectKey = `projects/${workspace.project.id}/generated/${id}-${filename}`;
   await putStoredObject(objectKey, bytes, contentType);
   await saveAssetRecord({ id, projectId: workspace.project.id, objectKey, filename, contentType, size: bytes.byteLength, kind, createdAt: new Date().toISOString() });
-  return { id, kind, channel, url: `/api/assets/${id}`, version, consistencyScore: 0, complianceStatus: "pending", retries, prompt, replacedFromId };
+  return { id, kind, channel, url: `/api/assets/${id}`, version, consistencyScore: 0, complianceStatus: "pending", retries, prompt, purpose: assetPurpose[kind].nameZh, factIds: requirement.factIds, qualityNotes: [], replacedFromId };
 }
 
 async function generateAssets(workspace: ProjectWorkspace, channels: Channel[], sourceImage: string): Promise<AssetVersion[]> {
   const generated: AssetVersion[] = [];
-  for (const channel of channels) for (const kind of Object.keys(assetPrompts) as AssetVersion["kind"][]) {
+  for (const channel of channels) for (const kind of assetKinds) {
+    if (!assetRequirement(kind, workspace.truth).ready) continue;
     generated.push(await generateSingleAsset(workspace, channel, kind, sourceImage, 1));
   }
   return generated;
@@ -110,19 +122,50 @@ async function generateAssets(workspace: ProjectWorkspace, channels: Channel[], 
 async function reviewAssets(workspace: ProjectWorkspace): Promise<ComplianceFinding[]> {
   if (!workspace.assets.length) return [];
   assertModelRouterConfigured();
-  const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.name}: ${fact.value}`).join("; ");
+  const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.id} | ${fact.name}: ${fact.value}`).join("; ");
   const findings: ComplianceFinding[] = [];
   for (const asset of workspace.assets) {
+    const requirement = assetRequirement(asset.kind, workspace.truth);
+    if (!requirement.ready) {
+      asset.complianceStatus = "failed";
+      asset.qualityNotes = [requirement.reasonZh];
+      findings.push({
+        id: `finding_asset_role_${asset.id}`,
+        ruleId: "asset-role-facts",
+        sourceId: asset.channel === "amazon-us" ? "amazon-images" : asset.channel === "tiktok-us" ? "tiktok-listing" : "shopify-media",
+        severity: "high",
+        status: "open",
+        target: `${asset.channel}/${asset.kind} image`,
+        excerpt: `${assetPurpose[asset.kind].nameZh}不可用`,
+        excerptZh: `${assetPurpose[asset.kind].nameZh}不可用`,
+        explanation: requirement.reason,
+        explanationZh: requirement.reasonZh,
+        suggestion: "补充并确认对应商品事实后，再重新生成该素材。",
+        suggestionZh: "补充并确认对应商品事实后，再重新生成该素材。",
+        location: { kind: "asset", channel: asset.channel, assetId: asset.id },
+        version: asset.version,
+      });
+      continue;
+    }
     const image = await assetDataUrl(asset.id, `${asset.channel}/${asset.kind} 图片`);
     const review = await visionJson<VisualReviewResult>(
-      "You review ecommerce product images against the supplied verified facts and channel rules. Return strict JSON. Do not infer hidden specifications. Mark passed false when the product identity is visibly altered, extra products/accessories are added, or the image contains misleading promotional/technical claims. Return every human-readable finding in both English and Simplified Chinese.",
-      `Return {passed,consistencyScore,findings:[{excerpt,excerptZh,severity,explanation,explanationZh,suggestion,suggestionZh,bbox}]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Channel: ${asset.channel}. Asset kind: ${asset.kind}. Review exact product identity, visible text, extra objects, unsupported claims, and suitability for the channel.`,
+      "You review ecommerce product images against supplied verified facts and the requested asset role. Return strict JSON. Do not infer hidden specifications. Mark passed false when the product identity is altered, an object is presented as an included accessory, or the image contains misleading claims. roleValid must be false when the image does not actually perform its requested role: a comparison image needs at least two fact-grounded feature callouts or clearly separated feature views; a size image needs visible measurement arrows/labels for the supplied dimensions; a main image must be a clean product-only image. Return every human-readable finding in both English and Simplified Chinese.",
+      `Return {passed,roleValid,roleIssue,roleIssueZh,consistencyScore,findings:[{excerpt,excerptZh,severity,explanation,explanationZh,suggestion,suggestionZh,bbox}]}. Product: ${workspace.truth.productName}. Verified facts with IDs: ${facts}. Allowed fact IDs for this asset: ${requirement.factIds.join(", ") || "none"}. Channel: ${asset.channel}. Asset kind: ${asset.kind}. Review exact product identity, role accuracy, visible text, extra objects, unsupported claims, and channel suitability.`,
       image,
     );
-    asset.consistencyScore = Math.max(0, Math.min(1, review.consistencyScore ?? (review.passed ? 1 : 0)));
+    const score = review.consistencyScore ?? (review.passed ? 1 : 0);
+    asset.consistencyScore = Math.max(0, Math.min(1, score > 1 ? score / 100 : score));
     const sourceId = asset.channel === "amazon-us" ? "amazon-images" : asset.channel === "tiktok-us" ? "tiktok-listing" : "shopify-media";
-    const actionableFindings = (review.findings ?? []).filter((issue) => review.passed === false || issue.severity === "high" || issue.severity === "medium" || issue.severity === "low");
-    asset.complianceStatus = review.passed && actionableFindings.length === 0 ? "passed" : "failed";
+    const roleFindings = review.roleValid === false ? [{ excerpt: review.roleIssue || `${assetPurpose[asset.kind].nameZh}未按用途生成`, excerptZh: review.roleIssueZh || `${assetPurpose[asset.kind].nameZh}未按用途生成`, severity: "high" as const, explanation: "The generated image does not satisfy the requested asset role.", explanationZh: "生成图片没有满足该素材用途的要求。", suggestion: asset.kind === "size" ? "重新生成带真实尺寸箭头和标签的规格图。" : asset.kind === "comparison" ? "重新生成带至少两条已确认特征说明的对比/特征图。" : "重新生成符合该素材用途的图片。", suggestionZh: asset.kind === "size" ? "重新生成带真实尺寸箭头和标签的规格图。" : asset.kind === "comparison" ? "重新生成带至少两条已确认特征说明的对比/特征图。" : "重新生成符合该素材用途的图片。", bbox: undefined } satisfies NonNullable<VisualReviewResult["findings"]>[number]] : [];
+    const visualFindings = (review.findings ?? []).flatMap((issue) => {
+      const severity = String(issue.severity ?? "high").toLowerCase();
+      if (severity === "info") return [];
+      return [{ ...issue, severity: severity === "error" ? "high" as const : severity === "medium" ? "medium" as const : severity === "low" ? "low" as const : "high" as const }];
+    });
+    const actionableFindings = [...visualFindings, ...roleFindings];
+    asset.qualityNotes = actionableFindings.map((issue) => issue.explanationZh || issue.explanation || "视觉模型待复核").slice(0, 3);
+    const informationalOnly = (review.findings ?? []).every((issue) => String(issue.severity ?? "info").toLowerCase() === "info");
+    asset.complianceStatus = review.roleValid !== false && actionableFindings.length === 0 && (review.passed !== false || informationalOnly) ? "passed" : "failed";
     for (const [index, issue] of actionableFindings.entries()) {
       findings.push({
         id: `finding_asset_${asset.id}_${index}`,
@@ -225,6 +268,8 @@ async function optimizeAssetLocation(workspace: ProjectWorkspace, findings: Comp
   if (!location || location.kind !== "asset" || !location.assetId) throw new Error("这条图片风险没有可编辑的素材定位，请先重新检测。" );
   const current = workspace.assets.find((asset) => asset.id === location.assetId);
   if (!current) throw new Error("对应图片不存在，可能已被替换；请重新检测后再优化。" );
+  const requirement = assetRequirement(current.kind, workspace.truth);
+  if (!requirement.ready) return false;
   if (!explicitRetry && current.retries >= maxAutomaticAssetRetries) return false;
   const sourceImage = await sourceImageDataUrl(workspace);
   const correction = findings.map((finding) => `${finding.excerpt}；${finding.explanation}；建议：${finding.suggestion}`).join("\n");
@@ -267,8 +312,9 @@ async function retryFailedAssets(workspace: ProjectWorkspace) {
 
 async function runComplianceScan(workspace: ProjectWorkspace) {
   const listingFindings = workspace.listings.flatMap((listing) => scanListing(listing, workspace.truth));
+  const detailFindings = workspace.project.channels.flatMap((channel) => scanDetail(channel, workspace.details[channel] ?? [], workspace.truth));
   const assetFindings = await reviewAssets(workspace);
-  workspace.findings = [...listingFindings, ...assetFindings];
+  workspace.findings = [...listingFindings, ...detailFindings, ...assetFindings];
   workspace.project.coverage = Object.fromEntries(workspace.project.channels.map((channel) => [channel, coverageFor(workspace.truth.category, channel)])) as ProjectWorkspace["project"]["coverage"];
   workspace.project.currentStep = "compliance";
   workspace.project.status = workspace.findings.length ? "needs_review" : "completed";
@@ -336,11 +382,29 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       workspace.listings = workspace.listings.map((listing) => {
         const next = generatedListings.find((item) => item.channel === listing.channel);
         if (!next) return listing;
-        return { ...next, titleZh: next.titleZh || "", bulletsZh: next.bulletsZh ?? next.bullets.map(() => ""), descriptionZh: next.descriptionZh || "", searchTermsZh: next.searchTermsZh || "", metaTitleZh: next.metaTitleZh || "", metaDescriptionZh: next.metaDescriptionZh || "" };
+        return {
+          ...next,
+          titleZh: next.titleZh || "",
+          bulletsZh: next.bulletsZh ?? next.bullets.map(() => ""),
+          descriptionZh: next.descriptionZh || "",
+          searchTermsZh: next.searchTermsZh || "",
+          metaTitleZh: next.metaTitleZh || "",
+          metaDescriptionZh: next.metaDescriptionZh || "",
+          claims: (next.claims ?? []).map((claim) => ({ ...claim, needsEvidence: claim.needsEvidence || claim.factIds.length === 0 })),
+        };
       });
-      workspace.details = { ...workspace.details, ...Object.fromEntries(Object.entries(generated.details ?? {}).map(([key, modules]) => [key, (modules ?? []).map((module) => ({ ...module, titleZh: module.titleZh || "", bodyZh: module.bodyZh || "" }))])) as Partial<Record<Channel, DetailModule[]>> };
+      const verifiedFactIds = new Set(verifiedFacts.map((fact) => fact.id));
+      workspace.details = { ...workspace.details, ...Object.fromEntries(Object.entries(generated.details ?? {}).map(([key, modules]) => [key, (modules ?? []).map((module, index) => ({ ...module, type: generatedDetailTypes.includes(module.type) ? module.type : generatedDetailTypes[index] ?? "benefits", titleZh: module.titleZh || "", bodyZh: module.bodyZh || "", factIds: (module.factIds ?? []).filter((factId) => verifiedFactIds.has(factId)), assetIds: [] }))])) as Partial<Record<Channel, DetailModule[]>> };
       const generatedAssets = await generateAssets(workspace, targetChannels, sourceImage);
       workspace.assets = [...workspace.assets.filter((asset) => !targetChannels.includes(asset.channel)), ...generatedAssets];
+      for (const targetChannel of targetChannels) {
+        const channelAssets = generatedAssets.filter((asset) => asset.channel === targetChannel);
+        workspace.details[targetChannel] = (workspace.details[targetChannel] ?? []).map((module) => {
+          const kind = assetKindForModule(module.type);
+          const asset = kind ? channelAssets.find((item) => item.kind === kind) : undefined;
+          return { ...module, assetIds: asset ? [asset.id] : [] };
+        });
+      }
       workspace.project.currentStep = "listing";
       workspace.project.status = "needs_review";
     } else if (action === "regenerate_asset") {
@@ -374,7 +438,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const remainingOpen = workspace.findings.filter((finding) => finding.status === "open");
     const exhaustedAssets = new Set(remainingOpen.filter((finding) => finding.location?.kind === "asset").map((finding) => finding.location?.assetId).filter((assetId): assetId is string => Boolean(assetId && workspace.assets.find((asset) => asset.id === assetId && asset.retries >= maxAutomaticAssetRetries))));
     const optimizationResult = remainingOpen.length ? `；复检后仍有 ${remainingOpen.length} 项风险${exhaustedAssets.size ? `，${exhaustedAssets.size} 张图片已达到自动重试上限，请人工替换` : "，请继续处理"}` : "，复检已通过";
-    const outputSummary = action === "regenerate_asset" ? "单张素材已重新生成，等待合规复检" : action === "optimize_finding" ? `单项风险已由 AI 优化并完成复检${optimizationResult}` : action === "optimize_all" ? `全部可定位风险已由 AI 优化并完成复检${optimizationResult}` : "工作流已真实执行并保存";
+    const unavailableRoles = assetKinds.filter((kind) => !assetRequirement(kind, workspace.truth).ready).map((kind) => assetPurpose[kind].nameZh).join("、");
+    const outputSummary = action === "regenerate_asset" ? "单张素材已重新生成，等待合规复检" : action === "optimize_finding" ? `单项风险已由 AI 优化并完成复检${optimizationResult}` : action === "optimize_all" ? `全部可定位风险已由 AI 优化并完成复检${optimizationResult}` : action === "generate" ? `内容与可用图片已生成${unavailableRoles ? `；${unavailableRoles}因缺少已确认事实暂未生成` : ""}` : "工作流已真实执行并保存";
     Object.assign(task, { status: "completed", outputSummary, completedAt: new Date().toISOString() });
     workspace.sources = ruleSources;
     workspace.project.updatedAt = new Date().toISOString();

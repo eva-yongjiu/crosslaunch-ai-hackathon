@@ -1,16 +1,26 @@
-import { strToU8, zipSync } from "fflate";
+import { zipSync } from "fflate";
+import type { AssetVersion, UploadedAsset } from "../../../../lib/domain";
+import { buildExportFiles, type ExportMaterial } from "../../../../lib/export-package";
 import { getAssetRecord } from "../../../../lib/asset-repository";
 import { getStoredObject } from "../../../../lib/storage";
 
-const jsonFile = (value: unknown) => strToU8(JSON.stringify(value, null, 2));
-const csvCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
 const safeFileName = (value: string) => value.replace(/[^a-zA-Z0-9._-]/g, "_") || "asset";
+const assetOrder: Record<string, number> = { main: 1, scene: 2, model: 3, comparison: 4, size: 5 };
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+function isLoopback(request: Request) {
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   let workspace;
-  try { const { getWorkspace } = await import("../../../../lib/repository"); workspace = await getWorkspace(id); }
-  catch { return Response.json({ error: "项目数据库暂不可用。" }, { status: 503 }); }
+  try {
+    const { getWorkspace } = await import("../../../../lib/repository");
+    workspace = await getWorkspace(id);
+  } catch {
+    return Response.json({ error: "项目数据库暂不可用。" }, { status: 503 });
+  }
   if (!workspace) return Response.json({ error: "项目不存在。" }, { status: 404 });
   if (!workspace.truth.confirmedAt || workspace.listings.some((listing) => !listing.title.trim())) {
     return Response.json({ error: "事实档案尚未确认或渠道 Listing 尚未生成，不能导出。" }, { status: 409 });
@@ -20,15 +30,15 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   if (workspace.assets.some((asset) => asset.complianceStatus !== "passed")) {
     return Response.json({ error: "仍有商品图片未通过合规复检，不能导出。" }, { status: 409 });
   }
-  const manifest = { product: workspace.project.productName, category: workspace.truth.category, channels: workspace.project.channels, outputLanguage: workspace.outputLanguage ?? "bilingual", exportedAt: new Date().toISOString(), disclaimer: "AI risk screening does not replace platform review or legal advice." };
-  const shopify = workspace.listings.find((item) => item.channel === "shopify-us");
-  const listingCsv = ["channel,title,title_zh,bullets,bullets_zh,description,description_zh,search_terms,search_terms_zh,score", ...workspace.listings.map((item) => [item.channel, item.title, item.titleZh ?? "", item.bullets.join(" | "), (item.bulletsZh ?? []).join(" | "), item.description, item.descriptionZh ?? "", item.searchTerms ?? "", item.searchTermsZh ?? "", String(item.score)].map(csvCell).join(","))].join("\r\n");
-  const shopifyHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${shopify?.metaTitle ?? shopify?.title ?? workspace.project.productName}</title><meta name="description" content="${shopify?.metaDescription ?? ""}"></head><body><main><h1>${shopify?.title ?? workspace.project.productName}</h1><p>${shopify?.description ?? ""}</p>${(workspace.details["shopify-us"] ?? []).map((module) => `<section data-module="${module.type}"><h2>${module.title}</h2><p>${module.body}</p><aside lang="zh-CN"><h3>${module.titleZh ?? ""}</h3><p>${module.bodyZh ?? ""}</p></aside></section>`).join("")}</main></body></html>`;
-  const assetFiles: Record<string, Uint8Array> = {};
-  const sourceAsset = workspace.truth.sourceAsset;
-  const assetsToExport = sourceAsset ? [sourceAsset, ...workspace.assets] : [...workspace.assets];
+
+  const materials: ExportMaterial[] = [];
   const seenAssetIds = new Set<string>();
-  for (const asset of assetsToExport) {
+  const sourceAsset = workspace.truth.sourceAsset;
+  const exportAssets: Array<AssetVersion | UploadedAsset> = sourceAsset ? [sourceAsset, ...workspace.assets] : [...workspace.assets];
+  const publicImages = !isLoopback(request);
+  const publicAssetUrl = (assetId: string) => publicImages ? new URL(`/api/assets/${assetId}`, request.url).toString() : "";
+  const channelPosition: Record<string, number> = {};
+  for (const asset of exportAssets) {
     if (seenAssetIds.has(asset.id)) continue;
     seenAssetIds.add(asset.id);
     const record = await getAssetRecord(asset.id);
@@ -36,23 +46,28 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     if (!record) return Response.json({ error: `素材记录不存在：${label}` }, { status: 409 });
     const object = await getStoredObject(record.objectKey);
     if (!object) return Response.json({ error: `素材文件不存在：${label}` }, { status: 409 });
-    const folder = "channel" in asset ? `assets/${asset.channel}` : "assets/source";
-    assetFiles[`${folder}/${safeFileName(record.filename)}`] = new Uint8Array(await object.arrayBuffer());
+    const isChannelAsset = "channel" in asset;
+    const positionKey = isChannelAsset ? asset.channel : "source";
+    channelPosition[positionKey] = (channelPosition[positionKey] ?? 0) + 1;
+    const position = isChannelAsset ? channelPosition[positionKey] : 1;
+    const prefix = isChannelAsset ? `${String(position).padStart(2, "0")}-${asset.kind}` : "source-product";
+    const folder = isChannelAsset ? `assets/${asset.channel}` : "assets/source";
+    materials.push({
+      asset,
+      filename: record.filename,
+      bytes: new Uint8Array(await object.arrayBuffer()),
+      archivePath: `${folder}/${prefix}-${safeFileName(record.filename)}`,
+      publicUrl: publicAssetUrl(asset.id),
+    });
   }
-  const archive = zipSync({
-    "manifest.json": jsonFile(manifest),
-    "product/truth-profile.json": jsonFile(workspace.truth),
-    "listings/all-channels.json": jsonFile(workspace.listings),
-    "listings/all-channels.csv": strToU8(`\uFEFF${listingCsv}`),
-    "shopify/product-page.html": strToU8(shopifyHtml),
-    "shopify/product-page.json": jsonFile({ listing: shopify, modules: workspace.details["shopify-us"] }),
-    "details/modules.json": jsonFile(workspace.details),
-    "assets/asset-manifest.json": jsonFile(workspace.assets),
-    ...assetFiles,
-    "compliance/report.json": jsonFile({ coverage: workspace.project.coverage, findings: workspace.findings }),
-    "compliance/rule-sources.json": jsonFile(workspace.sources),
-    "project/generation-trace.json": jsonFile(workspace.tasks),
-  }, { level: 6 });
+  materials.sort((a, b) => {
+    const aChannel = "channel" in a.asset ? a.asset.channel : "source";
+    const bChannel = "channel" in b.asset ? b.asset.channel : "source";
+    if (aChannel !== bChannel) return aChannel.localeCompare(bChannel);
+    return (assetOrder[a.asset.kind] ?? 99) - (assetOrder[b.asset.kind] ?? 99);
+  });
+  const files = buildExportFiles(workspace, materials);
+  const archive = zipSync(files, { level: 6 });
   const archiveBuffer = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength) as ArrayBuffer;
   return new Response(archiveBuffer, { headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="crosslaunch-${id}.zip"`, "Cache-Control": "no-store" } });
 }

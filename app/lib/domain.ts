@@ -122,6 +122,9 @@ export interface AssetVersion {
   complianceStatus: "pending" | "passed" | "failed";
   retries: number;
   prompt?: string;
+  purpose?: string;
+  factIds?: string[];
+  qualityNotes?: string[];
   replacedFromId?: string;
 }
 

@@ -62,6 +62,26 @@ test("supports bilingual AI output and precise compliance locations", async () =
   assert.match(workflow, /const assetFindings = await reviewAssets\(workspace\)/);
 });
 
+test("keeps image roles and listing claims grounded in product facts", async () => {
+  const [policy, workflow, compliance, component, workspace] = await Promise.all([
+    readFile(new URL("../app/lib/asset-policy.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/projects/[id]/workflow/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/compliance.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/experience-studio.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/workspace.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(policy, /dimensionFacts/);
+  assert.match(policy, /至少确认两条商品事实/);
+  assert.match(workflow, /roleValid/);
+  assert.match(workflow, /assetPurpose\[kind\]/);
+  assert.match(workflow, /assetIds: \[\]/);
+  assert.match(compliance, /factCoverageChecks/);
+  assert.match(compliance, /finding_fact_coverage/);
+  assert.match(component, /真实素材已嵌入预览/);
+  assert.match(component, /不可用于导出/);
+  assert.match(workspace, /detailTypeOrder/);
+});
+
 test("supports AI compliance optimization and recheck", async () => {
   const [workflow, component, client, styles] = await Promise.all([
     readFile(new URL("../app/api/projects/[id]/workflow/route.ts", import.meta.url), "utf8"),
@@ -102,11 +122,19 @@ test("does not silently fall back to fixture data", async () => {
 });
 
 test("exports a real ZIP delivery package", async () => {
-  const route = await readFile(new URL("../app/api/projects/[id]/export/route.ts", import.meta.url), "utf8");
+  const [route, exporter] = await Promise.all([
+    readFile(new URL("../app/api/projects/[id]/export/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/export-package.ts", import.meta.url), "utf8"),
+  ]);
+  const source = `${route}\n${exporter}`;
   assert.match(route, /zipSync/);
   assert.match(route, /application\/zip/);
-  assert.match(route, /all-channels\.csv/);
-  assert.match(route, /product-page\.html/);
-  assert.match(route, /rule-sources\.json/);
+  assert.match(source, /audit\/all-channels\.csv/);
+  assert.match(source, /product-page\.html/);
+  assert.match(source, /rule-sources\.json/);
+  assert.match(source, /01-listing-copy\.csv/);
+  assert.match(source, /02-image-order\.csv/);
+  assert.match(source, /products-import\.csv/);
+  assert.match(source, /START-HERE\.txt/);
   assert.match(route, /事实档案尚未确认/);
 });

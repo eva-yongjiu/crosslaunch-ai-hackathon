@@ -22,6 +22,7 @@ export const complianceRules: ComplianceRule[] = [
   { id: "health-treatment", sourceId: "fda-cosmetics", scope: "category", target: "all", severity: "high", categories: ["beauty", "cosmetics", "personal-care"], channels: ["amazon-us", "tiktok-us", "shopify-us"], pattern: "\\b(treat|heal|cure|repair disease|anti-inflammatory|medical grade)\\b", message: "美妆文案可能构成治疗疾病或影响身体结构/功能的药品宣称。", suggestion: "改为外观、清洁或保湿等化妆品用途表达，并核验支持材料。" },
   { id: "amazon-main-promo", sourceId: "amazon-images", scope: "platform", target: "image", severity: "high", categories: ["*"], channels: ["amazon-us"], message: "Amazon 主图不得包含促销文字、水印或非随售道具。", suggestion: "使用纯白背景，仅保留实际销售商品。" },
   { id: "tiktok-title-clickbait", sourceId: "tiktok-listing", scope: "platform", target: "title", severity: "medium", categories: ["*"], channels: ["tiktok-us"], pattern: "\\b(best seller|buy now|low stock|free gift)\\b", message: "TikTok Shop 标题包含点击诱导或促销表达。", suggestion: "保留准确的品类、属性、规格和使用场景。" },
+  { id: "asset-role-facts", sourceId: "ftc-truth", scope: "facts", target: "image", severity: "high", categories: ["*"], channels: ["amazon-us", "tiktok-us", "shopify-us"], message: "尺寸图和特征图只能展示已确认的商品事实，不能用普通商品图替代。", suggestion: "补充并确认对应事实后重新生成，或人工替换为真实素材。" },
 ];
 
 export function sourceFor(id: string) { return ruleSources.find((source) => source.id === id); }
