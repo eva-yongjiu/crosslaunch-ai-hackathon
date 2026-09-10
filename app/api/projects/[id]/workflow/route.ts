@@ -64,7 +64,7 @@ const assetPrompts: Record<AssetVersion["kind"], string> = {
   main: "a clean ecommerce main product image on pure white background, centered and fully visible, with no promotional text",
   scene: "a realistic lifestyle scene showing the product in one credible use context, with the product large enough to inspect",
   model: "a commercial lifestyle photo with a US-market model naturally using the exact product; supporting props may appear in the background but must never look like included accessories",
-  comparison: "a clean secondary feature-comparison infographic: show the exact product beside at least two clearly separated, fact-grounded feature callouts",
+  comparison: "a clean secondary feature-comparison infographic: show the exact product with at least two clearly separated, fact-grounded feature callouts or detail panels of the same product",
   size: "a technical size-and-specification infographic: show the exact product with visible measurement arrows and labels for every supplied dimensional fact",
 };
 const maxAutomaticAssetRetries = 2;
@@ -81,7 +81,7 @@ async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel
       : kind === "size"
         ? "This is a secondary image, so measurement arrows and labels are allowed only for the supplied verified dimensional facts. Never estimate or invent a measurement."
         : "This is a secondary lifestyle image. Do not add promotional text, watermarks or logos. Context props are allowed only when clearly separate from the product and never presented as included in the package.";
-  const prompt = `Use the supplied product photo as the authoritative visual reference. Create ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts with IDs: ${facts}. ${requirement.factIds.length ? `Facts allowed for this role: ${requirement.factIds.join(", ")}.` : ""} Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. ${channelGuardrail} Never invent specifications, certifications, efficacy, performance numbers, extra product copies or packaging. Do not alter the product identity. ${correctionText}`;
+  const prompt = `Use the supplied product photo as the authoritative visual reference. Create ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts with internal IDs: ${facts}. ${requirement.factIds.length ? `Internal fact references allowed for this role: ${requirement.factIds.join(", ")}.` : ""} Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. ${channelGuardrail} For comparison or size graphics, render only readable human-language labels such as the verified fact name and value; never render UUIDs, internal fact IDs, raw identifiers, lorem ipsum, placeholder text or invented numbers. A comparison image compares confirmed features or separated detail views of this same product; do not invent a competitor, second product, or unsupported benchmark. Never invent specifications, certifications, efficacy, performance numbers, extra product copies or packaging. Do not alter the product identity. ${correctionText}`;
   const result = await generateImage(prompt, "2048*2048", sourceImage);
   const remoteUrl = result.data?.[0]?.url;
   const encoded = result.data?.[0]?.b64_json;
