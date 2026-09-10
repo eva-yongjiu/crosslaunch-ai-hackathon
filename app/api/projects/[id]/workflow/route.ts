@@ -119,17 +119,12 @@ async function generateAssets(workspace: ProjectWorkspace, channels: Channel[], 
   return generated;
 }
 
-async function reviewAssets(workspace: ProjectWorkspace): Promise<ComplianceFinding[]> {
-  if (!workspace.assets.length) return [];
-  assertModelRouterConfigured();
-  const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.id} | ${fact.name}: ${fact.value}`).join("; ");
-  const findings: ComplianceFinding[] = [];
-  for (const asset of workspace.assets) {
+async function reviewSingleAsset(workspace: ProjectWorkspace, asset: AssetVersion, facts: string): Promise<ComplianceFinding[]> {
     const requirement = assetRequirement(asset.kind, workspace.truth);
     if (!requirement.ready) {
       asset.complianceStatus = "failed";
       asset.qualityNotes = [requirement.reasonZh];
-      findings.push({
+      return [{
         id: `finding_asset_role_${asset.id}`,
         ruleId: "asset-role-facts",
         sourceId: asset.channel === "amazon-us" ? "amazon-images" : asset.channel === "tiktok-us" ? "tiktok-listing" : "shopify-media",
@@ -144,8 +139,7 @@ async function reviewAssets(workspace: ProjectWorkspace): Promise<ComplianceFind
         suggestionZh: "补充并确认对应商品事实后，再重新生成该素材。",
         location: { kind: "asset", channel: asset.channel, assetId: asset.id },
         version: asset.version,
-      });
-      continue;
+      }];
     }
     const image = await assetDataUrl(asset.id, `${asset.channel}/${asset.kind} 图片`);
     const review = await visionJson<VisualReviewResult>(
@@ -166,27 +160,41 @@ async function reviewAssets(workspace: ProjectWorkspace): Promise<ComplianceFind
     asset.qualityNotes = actionableFindings.map((issue) => issue.explanationZh || issue.explanation || "视觉模型待复核").slice(0, 3);
     const informationalOnly = (review.findings ?? []).every((issue) => String(issue.severity ?? "info").toLowerCase() === "info");
     asset.complianceStatus = review.roleValid !== false && actionableFindings.length === 0 && (review.passed !== false || informationalOnly) ? "passed" : "failed";
-    for (const [index, issue] of actionableFindings.entries()) {
-      findings.push({
-        id: `finding_asset_${asset.id}_${index}`,
-        ruleId: "visual-asset-review",
-        sourceId,
-        severity: issue.severity ?? "high",
-        status: "open",
-        target: `${asset.channel}/${asset.kind} image`,
-        excerpt: issue.excerpt || "图片视觉风险",
-        explanation: issue.explanation || "视觉模型发现图片可能与商品事实或渠道要求不一致。",
-        suggestion: issue.suggestion || "重新生成或人工替换该图片后再次检测。",
-        bbox: issue.bbox,
-        excerptZh: issue.excerptZh,
-        explanationZh: issue.explanationZh,
-        suggestionZh: issue.suggestionZh,
-        location: { kind: "asset", channel: asset.channel, assetId: asset.id },
-        version: asset.version,
-      });
+    return actionableFindings.map((issue, index) => ({
+      id: `finding_asset_${asset.id}_${index}`,
+      ruleId: "visual-asset-review",
+      sourceId,
+      severity: issue.severity ?? "high",
+      status: "open" as const,
+      target: `${asset.channel}/${asset.kind} image`,
+      excerpt: issue.excerpt || "图片视觉风险",
+      explanation: issue.explanation || "视觉模型发现图片可能与商品事实或渠道要求不一致。",
+      suggestion: issue.suggestion || "重新生成或人工替换该图片后再次检测。",
+      bbox: issue.bbox,
+      excerptZh: issue.excerptZh,
+      explanationZh: issue.explanationZh,
+      suggestionZh: issue.suggestionZh,
+      location: { kind: "asset", channel: asset.channel, assetId: asset.id } as const,
+      version: asset.version,
+    }));
+}
+
+async function reviewAssets(workspace: ProjectWorkspace): Promise<ComplianceFinding[]> {
+  if (!workspace.assets.length) return [];
+  assertModelRouterConfigured();
+  const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.id} | ${fact.name}: ${fact.value}`).join("; ");
+  const assets = [...workspace.assets];
+  const results: ComplianceFinding[][] = Array.from({ length: assets.length }, () => []);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= assets.length) return;
+      results[index] = await reviewSingleAsset(workspace, assets[index], facts);
     }
-  }
-  return findings;
+  };
+  await Promise.all(Array.from({ length: Math.min(4, assets.length) }, () => worker()));
+  return results.flat();
 }
 
 function locationKey(location: ComplianceLocation) {
@@ -286,10 +294,19 @@ async function optimizeFindings(workspace: ProjectWorkspace, findings: Complianc
     groups.set(key, [...(groups.get(key) ?? []), finding]);
   }
   if (!groups.size) throw new Error("旧版检测记录无法精确优化，请先重新运行规则检测。" );
-  for (const group of groups.values()) {
-    if (group[0].location?.kind === "asset") await optimizeAssetLocation(workspace, group, true);
-    else await optimizeListingLocation(workspace, group);
+  const byChannel = new Map<Channel, ComplianceFinding[]>();
+  for (const finding of findings) {
+    if (!finding.location) continue;
+    const channel = finding.location.channel;
+    byChannel.set(channel, [...(byChannel.get(channel) ?? []), finding]);
   }
+  await Promise.all([...byChannel.entries()].map(async ([channel]) => {
+    const channelGroups = [...groups.values()].filter((group) => group[0].location?.channel === channel);
+    for (const group of channelGroups) {
+      if (group[0].location?.kind === "asset") await optimizeAssetLocation(workspace, group, true);
+      else await optimizeListingLocation(workspace, group);
+    }
+  }));
 }
 
 async function retryFailedAssets(workspace: ProjectWorkspace) {
