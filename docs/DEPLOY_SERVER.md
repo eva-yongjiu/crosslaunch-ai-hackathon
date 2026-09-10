@@ -4,6 +4,18 @@
 
 推荐路径：Docker Compose + Nginx + HTTPS。服务器只需要安装 Docker，不需要单独安装 Node.js。
 
+如果服务器还没有 Docker，可在 Ubuntu/Debian 上先执行：
+
+```bash
+apt-get update
+apt-get install -y ca-certificates curl
+curl -fsSL https://get.docker.com | sh
+systemctl enable --now docker
+docker compose version
+```
+
+如果服务器供应商不允许使用安装脚本，请使用供应商提供的 Docker Engine 安装方式，但最终应确认 `docker compose version` 可以正常返回版本号。
+
 ## 1. 部署前准备
 
 服务器建议满足：
@@ -39,6 +51,16 @@ unzip -o /opt/crosslaunch-ai-server-*.zip
 ```bash
 apt-get update && apt-get install -y unzip
 ```
+
+也可以不上传 ZIP，直接从 GitHub 获取当前代码：
+
+```bash
+apt-get update && apt-get install -y git
+git clone https://github.com/eva-yongjiu/crosslaunch-ai-hackathon.git /opt/crosslaunch-ai
+cd /opt/crosslaunch-ai
+```
+
+使用 ZIP 或 GitHub 二选一；不要在同一目录重复解压和克隆。
 
 ## 3. 必须修改的配置
 
