@@ -60,7 +60,16 @@ TOKEN_PLAN_IMAGE_MODEL=qwen-image-2.0
 
 ## 普通服务器部署
 
-当前项目可以使用 Vinext 的 Node 生产服务器：
+完整的服务器部署、Token 配置、Nginx/HTTPS、备份、更新和故障排查流程见：[docs/DEPLOY_SERVER.md](docs/DEPLOY_SERVER.md)。推荐使用 Docker Compose：
+
+```bash
+cp .env.example .env
+# 编辑 .env，填写 TOKEN_PLAN_API_KEY
+docker compose build
+docker compose up -d
+```
+
+如果不使用 Docker，项目也可以使用 Vinext 的 Node 生产服务器：
 
 ```bash
 npm ci
