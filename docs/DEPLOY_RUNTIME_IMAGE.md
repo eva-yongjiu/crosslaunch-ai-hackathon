@@ -47,7 +47,7 @@ docker images crosslaunch-ai
 应看到镜像标签：
 
 ```text
-crosslaunch-ai   finale-20260911
+crosslaunch-ai   finale-20260911-v3
 ```
 
 ## 4. 填写服务器配置
@@ -105,6 +105,30 @@ docker compose -f docker-compose.runtime.yml logs -f --tail=200 crosslaunch
 
 临时访问：`http://服务器IP:3000`。
 
+启动后先做静态资源检查：
+
+```bash
+curl -sS http://127.0.0.1:3000/ | grep -o '/_next/static/[^" ]*' | head
+docker inspect --format '{{json .State.Health}}' $(docker compose -f docker-compose.runtime.yml ps -q crosslaunch)
+```
+
+如果首页能打开但浏览器控制台出现 `/_next/static/... 404`，优先检查 Nginx。Nginx 必须把所有路径统一转发到容器，不能使用 `try_files ... /index.html`，也不要单独把 `/_next/` 指向其他旧目录。核心配置应包含：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 900s;
+    proxy_send_timeout 900s;
+}
+```
+
+不要保留旧站点中的 `root`、`try_files` 或 `location /_next/` 静态目录配置。
+
 ## 6. 域名和 HTTPS
 
 Nginx 反向代理到 `127.0.0.1:3000`。至少配置：
@@ -129,6 +153,16 @@ docker compose -f docker-compose.runtime.yml stop
 # 查看日志
 docker compose -f docker-compose.runtime.yml logs --tail=300 crosslaunch
 ```
+
+升级到新运行包时：
+
+```bash
+docker compose -f docker-compose.runtime.yml down
+docker load -i crosslaunch-ai-image-20260911.tar
+docker compose -f docker-compose.runtime.yml up -d
+```
+
+这个流程不会删除数据卷；不要加 `-v`。
 
 不要执行：
 
