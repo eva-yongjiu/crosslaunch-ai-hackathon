@@ -6,7 +6,10 @@ ENV PORT=3000
 ENV CROSSLAUNCH_DATA_DIR=/app/.data
 
 COPY package*.json ./
-RUN npm ci
+# vinext 同时负责生产构建和生产启动，必须保留 devDependencies。
+RUN npm ci --include=dev
+# 在复制源码前先确认 CLI 已安装，避免构建阶段才出现 exit code 127。
+RUN ./node_modules/.bin/vinext --version
 
 COPY . .
 RUN npm run build
