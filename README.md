@@ -60,7 +60,7 @@ TOKEN_PLAN_IMAGE_MODEL=qwen-image-2.0
 
 ## 普通服务器部署
 
-完整的服务器部署、Token 配置、Nginx/HTTPS、备份、更新和故障排查流程见：[docs/DEPLOY_SERVER.md](docs/DEPLOY_SERVER.md)。推荐使用 Docker Compose：
+服务器无需保存源码，推荐使用已经构建好的运行时镜像包，流程见：[docs/DEPLOY_RUNTIME_IMAGE.md](docs/DEPLOY_RUNTIME_IMAGE.md)。完整的 Nginx/HTTPS、备份和故障排查流程见：[docs/DEPLOY_SERVER.md](docs/DEPLOY_SERVER.md)。
 
 ```bash
 cp .env.example .env
