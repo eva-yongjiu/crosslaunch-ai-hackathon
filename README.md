@@ -60,7 +60,11 @@ TOKEN_PLAN_IMAGE_MODEL=qwen-image-2.0
 
 ## 普通服务器部署
 
-服务器无需保存源码，推荐使用已经构建好的运行时镜像包，流程见：[docs/DEPLOY_RUNTIME_IMAGE.md](docs/DEPLOY_RUNTIME_IMAGE.md)。完整的 Nginx/HTTPS、备份和故障排查流程见：[docs/DEPLOY_SERVER.md](docs/DEPLOY_SERVER.md)。
+如果服务器上的 Nginx 需要被多个项目共用，推荐使用“静态前端 + 后端运行包”：静态包上传到 HTML 目录，后端仍以无源码 Docker 运行包提供 AI 和 API，完整流程见：[docs/DEPLOY_STATIC_FRONTEND.md](docs/DEPLOY_STATIC_FRONTEND.md)。
+
+本次生成的交付包位于 `.artifacts/deployment/`：`crosslaunch-ai-web-static-20260912.zip` 是静态前端包，`crosslaunch-ai-backend-20260912.zip` 是后端运行包。服务器不需要保存源码。
+
+如果不需要共享 Nginx 前缀，也可以直接使用运行时镜像包。完整的 Nginx/HTTPS、备份和故障排查流程见：[docs/DEPLOY_RUNTIME_IMAGE.md](docs/DEPLOY_RUNTIME_IMAGE.md) 和 [docs/DEPLOY_SERVER.md](docs/DEPLOY_SERVER.md)。
 
 ```bash
 cp .env.example .env

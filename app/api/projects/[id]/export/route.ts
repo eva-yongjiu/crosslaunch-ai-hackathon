@@ -12,6 +12,11 @@ function isLoopback(request: Request) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
+function publicBasePath() {
+  const configured = process.env.CROSSLAUNCH_PUBLIC_BASE_PATH?.trim() ?? "";
+  return configured === "/" ? "" : `/${configured.replace(/^\/+|\/+$/g, "")}`.replace(/^\/$/, "");
+}
+
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   let workspace;
@@ -36,7 +41,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const sourceAsset = workspace.truth.sourceAsset;
   const exportAssets: Array<AssetVersion | UploadedAsset> = sourceAsset ? [sourceAsset, ...workspace.assets] : [...workspace.assets];
   const publicImages = !isLoopback(request);
-  const publicAssetUrl = (assetId: string) => publicImages ? new URL(`/api/assets/${assetId}`, request.url).toString() : "";
+  const publicAssetUrl = (assetId: string) => publicImages ? new URL(`${publicBasePath()}/api/assets/${assetId}`, request.url).toString() : "";
   const channelPosition: Record<string, number> = {};
   for (const asset of exportAssets) {
     if (seenAssetIds.has(asset.id)) continue;
