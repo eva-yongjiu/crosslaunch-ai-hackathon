@@ -78,7 +78,7 @@ test("keeps image roles and listing claims grounded in product facts", async () 
   assert.match(compliance, /factCoverageChecks/);
   assert.match(compliance, /finding_fact_coverage/);
   assert.match(component, /真实素材已嵌入预览/);
-  assert.match(component, /不可用于导出/);
+  assert.match(component, /不能导出/);
   assert.match(workspace, /detailTypeOrder/);
 });
 
@@ -95,8 +95,8 @@ test("supports AI compliance optimization and recheck", async () => {
   assert.match(workflow, /retryFailedAssets/);
   assert.match(workflow, /maxAutomaticAssetRetries/);
   assert.match(workflow, /replacementZh/);
-  assert.match(component, /AI 一键优化全部并复检/);
-  assert.match(component, /AI 优化此项并复检/);
+  assert.match(component, /一键优化全部并复查/);
+  assert.match(component, /AI 优化此项并复查/);
   assert.match(component, /risk-list/);
   assert.match(component, /risk-actions/);
   assert.match(component, /const loadRuntime = async/);
@@ -136,5 +136,5 @@ test("exports a real ZIP delivery package", async () => {
   assert.match(source, /02-image-order\.csv/);
   assert.match(source, /products-import\.csv/);
   assert.match(source, /START-HERE\.txt/);
-  assert.match(route, /事实档案尚未确认/);
+  assert.match(route, /完成一次检查/);
 });

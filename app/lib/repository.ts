@@ -2,6 +2,8 @@ import { desc, eq, ne } from "drizzle-orm";
 import { getDb, hasDatabase } from "../../db";
 import { projectVersions, projects, workspaces } from "../../db/schema";
 import type { LaunchProject, ProjectWorkspace } from "./domain";
+import { deleteAssetRecordsForProject } from "./asset-repository";
+import { deleteStoredProjectObjects } from "./storage";
 import { normalizeWorkspace } from "./workspace";
 
 type LocalVersion = { id: string; version: number; reason: string; createdAt: string };
@@ -116,4 +118,22 @@ export async function saveWorkspace(workspace: ProjectWorkspace, reason: string)
 export async function listVersions(projectId: string) {
   if (!(await hasDatabase())) return (await readLocalStore()).versions[projectId] ?? [];
   return (await getDb()).select({ id: projectVersions.id, version: projectVersions.version, reason: projectVersions.reason, createdAt: projectVersions.createdAt }).from(projectVersions).where(eq(projectVersions.projectId, projectId)).orderBy(desc(projectVersions.version));
+}
+
+export async function deleteProject(projectId: string) {
+  if (projectId === "project_demo") throw new Error("演示项目不能删除。");
+  if (!(await hasDatabase())) {
+    const store = await readLocalStore();
+    delete store.projects[projectId];
+    delete store.workspaces[projectId];
+    delete store.versions[projectId];
+    await writeLocalStore(store);
+  } else {
+    const db = await getDb();
+    await db.delete(workspaces).where(eq(workspaces.projectId, projectId));
+    await db.delete(projectVersions).where(eq(projectVersions.projectId, projectId));
+    await db.delete(projects).where(eq(projects.id, projectId));
+  }
+  await deleteAssetRecordsForProject(projectId);
+  await deleteStoredProjectObjects(projectId);
 }

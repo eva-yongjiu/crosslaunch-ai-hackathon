@@ -29,15 +29,17 @@ function channelsMaterials(channel: Channel, materials: ExportMaterial[]) {
   return materials.filter((material): material is ExportMaterial & { asset: AssetVersion } => "channel" in material.asset && material.asset.channel === channel).sort((a, b) => (assetOrder[a.asset.kind] ?? 99) - (assetOrder[b.asset.kind] ?? 99));
 }
 
-function fieldRows(listing: ChannelListing, channel: Channel) {
+function fieldRows(listing: ChannelListing, channel: Channel, workspace: ProjectWorkspace) {
+  const factNames = new Map(workspace.truth.attributes.map((fact) => [fact.id, `${fact.nameZh || fact.name}: ${fact.valueZh || fact.value}`]));
+  const linkedFacts = listing.claims.flatMap((claim) => claim.factIds.map((id) => factNames.get(id) || "")).filter(Boolean).join("；");
   const rows: Array<[string, string, string, string, string]> = [
-    ["Product title", listing.title, listing.titleZh ?? "", "商品标题 / Product title", listing.claims.map((claim) => claim.factIds.join("|")).filter(Boolean).join("|")],
+    ["Product title", listing.title, listing.titleZh ?? "", "商品标题 / Product title", linkedFacts],
   ];
   const bulletCount = channel === "amazon-us" ? 5 : listing.bullets.length;
   for (let index = 0; index < bulletCount; index += 1) {
-    rows.push([`Bullet ${index + 1}`, listing.bullets[index] ?? "", listing.bulletsZh?.[index] ?? "", "核心卖点 / Selling point", listing.claims.map((claim) => claim.factIds.join("|")).filter(Boolean).join("|")]);
+    rows.push([`Bullet ${index + 1}`, listing.bullets[index] ?? "", listing.bulletsZh?.[index] ?? "", "核心卖点 / Selling point", linkedFacts]);
   }
-  rows.push(["Description", listing.description, listing.descriptionZh ?? "", "商品描述 / Product description", listing.claims.map((claim) => claim.factIds.join("|")).filter(Boolean).join("|")]);
+  rows.push(["Description", listing.description, listing.descriptionZh ?? "", "商品描述 / Product description", linkedFacts]);
   if (listing.searchTerms !== undefined) rows.push(["Search terms", listing.searchTerms, listing.searchTermsZh ?? "", "搜索词 / Search terms", ""]);
   if (listing.metaTitle !== undefined) rows.push(["SEO title", listing.metaTitle, listing.metaTitleZh ?? "", "SEO 标题 / SEO title", ""]);
   if (listing.metaDescription !== undefined) rows.push(["SEO description", listing.metaDescription, listing.metaDescriptionZh ?? "", "SEO 描述 / SEO description", ""]);
@@ -138,11 +140,11 @@ export function buildExportFiles(workspace: ProjectWorkspace, materials: ExportM
     const listing = workspace.listings.find((item) => item.channel === channel);
     if (!listing) continue;
     const folder = channel;
-    const rows = fieldRows(listing, channel);
+    const rows = fieldRows(listing, channel, workspace);
     const images = imageRows(materials, channel);
     const modules = detailRows(workspace.details[channel] ?? []);
     put(`${folder}/START-HERE.txt`, platformReadme(workspace, channel));
-    put(`${folder}/01-listing-copy.csv`, csvFile(["field", "English for publishing", "Chinese reference", "where to use", "linked fact IDs"], rows));
+    put(`${folder}/01-listing-copy.csv`, csvFile(["field", "English for publishing", "Chinese reference", "where to use", "商品信息来源"], rows));
     put(`${folder}/02-image-order.csv`, csvFile(["position", "upload role", "asset type", "archive file", "public URL", "compliance", "consistency", "retries", "operator note"], images));
     put(`${folder}/03-detail-modules.csv`, csvFile(["module type", "English title", "Chinese title", "English body", "Chinese body", "asset IDs"], modules));
     if (channel === "shopify-us") {

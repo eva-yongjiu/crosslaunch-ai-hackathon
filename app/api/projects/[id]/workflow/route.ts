@@ -107,16 +107,19 @@ async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel
   const objectKey = `projects/${workspace.project.id}/generated/${id}-${filename}`;
   await putStoredObject(objectKey, bytes, contentType);
   await saveAssetRecord({ id, projectId: workspace.project.id, objectKey, filename, contentType, size: bytes.byteLength, kind, createdAt: new Date().toISOString() });
-  return { id, kind, channel, url: `/api/assets/${id}`, version, consistencyScore: 0, complianceStatus: "pending", retries, prompt, purpose: assetPurpose[kind].nameZh, factIds: requirement.factIds, qualityNotes: [], replacedFromId };
+  return { id, kind, channel, url: `/api/assets/${id}`, version, consistencyScore: 0, complianceStatus: "pending", retries, purpose: assetPurpose[kind].nameZh, factIds: requirement.factIds, qualityNotes: [], replacedFromId };
 }
 
 async function generateAssets(workspace: ProjectWorkspace, channels: Channel[], sourceImage: string): Promise<AssetVersion[]> {
-  const generated: AssetVersion[] = [];
-  for (const channel of channels) for (const kind of assetKinds) {
-    if (!assetRequirement(kind, workspace.truth).ready) continue;
-    generated.push(await generateSingleAsset(workspace, channel, kind, sourceImage, 1));
-  }
-  return generated;
+  const perChannel = await Promise.all(channels.map(async (channel) => {
+    const generated: AssetVersion[] = [];
+    for (const kind of assetKinds) {
+      if (!assetRequirement(kind, workspace.truth).ready) continue;
+      generated.push(await generateSingleAsset(workspace, channel, kind, sourceImage, 1));
+    }
+    return generated;
+  }));
+  return perChannel.flat();
 }
 
 async function reviewSingleAsset(workspace: ProjectWorkspace, asset: AssetVersion, facts: string): Promise<ComplianceFinding[]> {
@@ -181,7 +184,6 @@ async function reviewSingleAsset(workspace: ProjectWorkspace, asset: AssetVersio
 
 async function reviewAssets(workspace: ProjectWorkspace): Promise<ComplianceFinding[]> {
   if (!workspace.assets.length) return [];
-  assertModelRouterConfigured();
   const facts = workspace.truth.attributes.filter((fact) => fact.status === "verified").map((fact) => `${fact.id} | ${fact.name}: ${fact.value}`).join("; ");
   const assets = [...workspace.assets];
   const results: ComplianceFinding[][] = Array.from({ length: assets.length }, () => []);
@@ -190,7 +192,16 @@ async function reviewAssets(workspace: ProjectWorkspace): Promise<ComplianceFind
     while (true) {
       const index = nextIndex++;
       if (index >= assets.length) return;
-      results[index] = await reviewSingleAsset(workspace, assets[index], facts);
+      try {
+        results[index] = await reviewSingleAsset(workspace, assets[index], facts);
+      } catch (error) {
+        const asset = assets[index];
+        const sourceId = asset.channel === "amazon-us" ? "amazon-images" : asset.channel === "tiktok-us" ? "tiktok-listing" : "shopify-media";
+        const message = error instanceof Error ? error.message : "图片检查服务暂时不可用。";
+        asset.complianceStatus = "failed";
+        asset.qualityNotes = [`图片检查失败：${message}`];
+        results[index] = [{ id: `finding_asset_error_${asset.id}`, ruleId: "visual-asset-review", sourceId, severity: "high", status: "open", target: `${asset.channel}/${asset.kind} image`, excerpt: "图片尚未完成检查", excerptZh: "图片尚未完成检查", explanation: `The image could not be reviewed: ${message}`, explanationZh: `图片检查没有完成：${message}`, suggestion: "检查 AI 配置和图片文件后重新运行检查，或人工替换图片。", suggestionZh: "检查 AI 配置和图片文件后重新运行检查，或人工替换图片。", location: { kind: "asset", channel: asset.channel, assetId: asset.id }, version: asset.version }];
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, assets.length) }, () => worker()));
@@ -337,6 +348,12 @@ async function runComplianceScan(workspace: ProjectWorkspace) {
   workspace.project.status = workspace.findings.length ? "needs_review" : "completed";
 }
 
+function hasGeneratedContent(workspace: ProjectWorkspace) {
+  const hasListing = workspace.listings.some((listing) => [listing.title, listing.description, ...listing.bullets].some((value) => value.trim().length > 0));
+  const hasDetails = Object.values(workspace.details).some((modules) => modules.length > 0);
+  return hasListing || hasDetails || workspace.assets.length > 0;
+}
+
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const body = await request.json().catch(() => ({})) as { action?: Action; workspace?: ProjectWorkspace; channel?: Channel; assetId?: string; findingId?: string };
@@ -437,6 +454,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       workspace.project.currentStep = "compliance";
       workspace.project.status = "needs_review";
     } else if (action === "scan") {
+      if (!hasGeneratedContent(workspace)) throw new Error("请先生成 Listing、详情页或商品图片，再开始检查。" );
       await runComplianceScan(workspace);
     } else if (action === "optimize_finding" || action === "optimize_all") {
       assertModelRouterConfigured();
@@ -472,6 +490,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     Object.assign(task, { status: "failed", error: message, completedAt: new Date().toISOString() });
     workspace.project.updatedAt = new Date().toISOString();
     try { await persist(workspace, `工作流失败：${action}`); } catch { /* original failure is more useful */ }
-    return Response.json({ error: message, workspace, task }, { status: modelMode() === "live" ? 502 : 409 });
+    const clientError = /^(请先|至少|缺少|找不到|当前没有|旧版)/.test(message);
+    return Response.json({ error: message, workspace, task }, { status: clientError ? 409 : modelMode() === "live" ? 502 : 409 });
   }
 }

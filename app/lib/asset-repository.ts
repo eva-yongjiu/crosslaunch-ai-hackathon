@@ -53,3 +53,12 @@ export async function saveAssetRecord(record: StoredAssetRecord) {
   }
   await (await getDb()).insert(assetObjects).values(record);
 }
+
+export async function deleteAssetRecordsForProject(projectId: string) {
+  if (!(await hasDatabase())) {
+    const assets = await readLocalAssets();
+    await writeLocalAssets(Object.fromEntries(Object.entries(assets).filter(([, record]) => record.projectId !== projectId)));
+    return;
+  }
+  await (await getDb()).delete(assetObjects).where(eq(assetObjects.projectId, projectId));
+}

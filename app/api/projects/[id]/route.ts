@@ -31,3 +31,16 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     return Response.json({ error: "保存失败，修改没有被伪装成成功。" }, { status: 503 });
   }
 }
+
+export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
+  const { id } = await context.params;
+  try {
+    const { deleteProject } = await import("../../../lib/repository");
+    await deleteProject(id);
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    console.error("Unable to delete project", error);
+    const message = error instanceof Error ? error.message : "项目删除失败。";
+    return Response.json({ error: message }, { status: message === "演示项目不能删除。" ? 400 : 503 });
+  }
+}

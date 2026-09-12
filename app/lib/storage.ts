@@ -55,3 +55,24 @@ export async function getStoredObject(objectKey: string): Promise<StoredObject |
     throw error;
   }
 }
+
+export async function deleteStoredProjectObjects(projectId: string) {
+  const env = await getRuntimeEnv();
+  const prefix = `projects/${projectId}/`;
+  if (env.ASSETS_BUCKET) {
+    let cursor: string | undefined;
+    do {
+      const page = await env.ASSETS_BUCKET.list({ prefix, cursor });
+      const keys = page.objects.map((object) => object.key);
+      if (keys.length) await env.ASSETS_BUCKET.delete(keys);
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    return;
+  }
+  const path = await import("node:path");
+  const fs = await import("node:fs/promises");
+  const root = path.resolve(dataRoot(), "assets");
+  const target = path.resolve(root, "projects", projectId);
+  if (!target.startsWith(`${path.resolve(root)}${path.sep}`)) throw new Error("非法素材目录。");
+  await fs.rm(target, { recursive: true, force: true });
+}

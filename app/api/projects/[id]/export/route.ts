@@ -27,10 +27,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     return Response.json({ error: "项目数据库暂不可用。" }, { status: 503 });
   }
   if (!workspace) return Response.json({ error: "项目不存在。" }, { status: 404 });
-  if (!workspace.truth.confirmedAt || workspace.listings.some((listing) => !listing.title.trim())) {
-    return Response.json({ error: "事实档案尚未确认或渠道 Listing 尚未生成，不能导出。" }, { status: 409 });
+  const hasCompletedCheck = workspace.tasks.some((task) => task.type === "compliance" && task.status === "completed");
+  if (!workspace.truth.confirmedAt || !hasCompletedCheck || workspace.listings.some((listing) => !listing.title.trim())) {
+    return Response.json({ error: "请先确认商品信息、生成全部渠道内容并完成一次检查，才能导出。" }, { status: 409 });
   }
-  const blocking = workspace.findings.filter((finding) => finding.severity === "high" && finding.status === "open");
+  const blocking = workspace.findings.filter((finding) => finding.status === "open");
   if (blocking.length) return Response.json({ error: "存在未处理的高风险项", blocking: blocking.map((item) => item.id) }, { status: 409 });
   if (workspace.assets.some((asset) => asset.complianceStatus !== "passed")) {
     return Response.json({ error: "仍有商品图片未通过合规复检，不能导出。" }, { status: 409 });

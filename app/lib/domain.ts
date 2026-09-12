@@ -121,7 +121,6 @@ export interface AssetVersion {
   consistencyScore: number;
   complianceStatus: "pending" | "passed" | "failed";
   retries: number;
-  prompt?: string;
   purpose?: string;
   factIds?: string[];
   qualityNotes?: string[];

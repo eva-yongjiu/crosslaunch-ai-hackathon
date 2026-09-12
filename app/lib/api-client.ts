@@ -31,6 +31,10 @@ export function loadWorkspace(id: string) {
   return json<{ workspace: ProjectWorkspace; storage: "d1" | "local"; versions: Array<{ id: string; version: number; reason: string; createdAt: string }> }>(appPath(`/api/projects/${id}`));
 }
 
+export function deleteProject(id: string) {
+  return json<void>(appPath(`/api/projects/${id}`), { method: "DELETE" });
+}
+
 export function runWorkflow(id: string, action: "analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "optimize_finding" | "optimize_all" | "regenerate_asset", workspace: ProjectWorkspace, channel?: Channel, assetId?: string, findingId?: string) {
   return json<{ workspace: ProjectWorkspace; storage: "d1" | "local" }>(appPath(`/api/projects/${id}/workflow`), { method: "POST", body: JSON.stringify({ action, workspace, channel, assetId, findingId }) });
 }

@@ -1,6 +1,6 @@
 services:
   crosslaunch:
-    image: crosslaunch-ai:finale-20260912-v4
+    image: crosslaunch-ai:finale-20260912-v5
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:3000"
