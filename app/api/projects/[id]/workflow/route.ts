@@ -341,13 +341,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const { id } = await context.params;
   const body = await request.json().catch(() => ({})) as { action?: Action; workspace?: ProjectWorkspace; channel?: Channel; assetId?: string; findingId?: string };
   if (!body.action) return Response.json({ error: "缺少工作流动作。" }, { status: 400 });
-  let workspace = body.workspace;
-  if (!workspace) {
+  let workspaceCandidate = body.workspace;
+  if (!workspaceCandidate) {
     const { getWorkspace } = await import("../../../../lib/repository");
-    workspace = await getWorkspace(id) ?? undefined;
+    workspaceCandidate = await getWorkspace(id) ?? undefined;
   }
-  if (!workspace || workspace.project.id !== id) return Response.json({ error: "项目不存在或 ID 不匹配。" }, { status: 404 });
-  workspace = normalizeWorkspace(workspace);
+  if (!workspaceCandidate || workspaceCandidate.project.id !== id) return Response.json({ error: "项目不存在或 ID 不匹配。" }, { status: 404 });
+  let workspace = normalizeWorkspace(workspaceCandidate);
   const action = body.action;
   const task = makeTask(id, action);
   workspace.tasks = [...workspace.tasks, task];
@@ -452,6 +452,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       removeUnsupportedClaims(workspace);
       await runComplianceScan(workspace);
     }
+    // Model output and older saved projects may contain arrays with non-string
+    // values. Normalize once more before returning the workspace to the browser
+    // so a malformed translation can never crash the whole React tree.
+    workspace = normalizeWorkspace(workspace);
     const remainingOpen = workspace.findings.filter((finding) => finding.status === "open");
     const exhaustedAssets = new Set(remainingOpen.filter((finding) => finding.location?.kind === "asset").map((finding) => finding.location?.assetId).filter((assetId): assetId is string => Boolean(assetId && workspace.assets.find((asset) => asset.id === assetId && asset.retries >= maxAutomaticAssetRetries))));
     const optimizationResult = remainingOpen.length ? `；复检后仍有 ${remainingOpen.length} 项风险${exhaustedAssets.size ? `，${exhaustedAssets.size} 张图片已达到自动重试上限，请人工替换` : "，请继续处理"}` : "，复检已通过";

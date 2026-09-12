@@ -1,5 +1,6 @@
 import { ruleSources } from "../../../lib/rules";
 import type { ProjectWorkspace } from "../../../lib/domain";
+import { normalizeWorkspace } from "../../../lib/workspace";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -19,10 +20,11 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
   const { id } = await context.params;
   const body = await request.json().catch(() => ({})) as { workspace?: ProjectWorkspace; reason?: string };
   if (!body.workspace || body.workspace.project.id !== id) return Response.json({ error: "项目 ID 不匹配。" }, { status: 400 });
-  body.workspace.project.updatedAt = new Date().toISOString();
+  const normalizedWorkspace = normalizeWorkspace(body.workspace);
+  normalizedWorkspace.project.updatedAt = new Date().toISOString();
   try {
     const { databaseMode, saveWorkspace } = await import("../../../lib/repository");
-    const result = await saveWorkspace(body.workspace, body.reason || "保存工作区");
+    const result = await saveWorkspace(normalizedWorkspace, body.reason || "保存工作区");
     return Response.json({ ...result, storage: await databaseMode() });
   } catch (error) {
     console.error("Unable to save project", error);
