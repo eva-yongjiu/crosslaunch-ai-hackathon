@@ -175,3 +175,10 @@ test("keeps compliance checks, optimization and exports scoped to one platform",
   assert.match(component, /export\?channel=/);
   assert.match(exporter, /channels: Channel\[\] = workspace\.project\.channels/);
 });
+
+test("removes replaced image findings before adding recheck results", async () => {
+  const workflow = await readFile(new URL("../app/api/projects/[id]/workflow/route.ts", import.meta.url), "utf8");
+  assert.match(workflow, /complete affected-ID set for cleanup/);
+  assert.match(workflow, /return !targetAssetIds\.has\(finding\.location\.assetId \?\? ""\)/);
+  assert.match(workflow, /const reviewIds = new Set/);
+});

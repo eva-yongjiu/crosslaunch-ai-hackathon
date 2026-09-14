@@ -469,6 +469,10 @@ async function retryFailedAssets(workspace: ProjectWorkspace, changedAssetIds: S
 async function runComplianceScan(workspace: ProjectWorkspace, assetIds?: Set<string>, channel?: Channel) {
   const targetChannels = channel ? [channel] : workspace.project.channels;
   const targetAssets = workspace.assets.filter((asset) => targetChannels.includes(asset.channel));
+  // Keep the complete affected-ID set for cleanup. When an image is replaced,
+  // the old finding points to the old asset ID while the new review points to
+  // the replacement ID. Filtering only IDs that still exist would preserve
+  // the old finding and make the risk count grow after every optimization.
   const targetAssetIds = assetIds ?? new Set(targetAssets.filter((asset) => asset.complianceStatus !== "passed").map((asset) => asset.id));
   const reviewIds = new Set([...targetAssetIds].filter((assetId) => targetAssets.some((asset) => asset.id === assetId)));
   const listingFindings = workspace.listings.filter((listing) => targetChannels.includes(listing.channel)).flatMap((listing) => scanListing(listing, workspace.truth));
@@ -483,7 +487,7 @@ async function runComplianceScan(workspace: ProjectWorkspace, assetIds?: Set<str
     if (channel && !finding.location) return false;
     if (channel && finding.location?.channel !== channel) return true;
     if (finding.location?.kind !== "asset") return false;
-    return !reviewIds.has(finding.location.assetId ?? "");
+    return !targetAssetIds.has(finding.location.assetId ?? "");
   });
   workspace.findings = [...preservedFindings, ...listingFindings, ...detailFindings, ...assetFindings];
   workspace.project.coverage = Object.fromEntries(workspace.project.channels.map((channel) => [channel, coverageFor(workspace.truth.category, channel)])) as ProjectWorkspace["project"]["coverage"];
