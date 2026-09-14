@@ -39,6 +39,7 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+/.openai/
 /.data/
 /.data-live-verify/
 /.artifacts/

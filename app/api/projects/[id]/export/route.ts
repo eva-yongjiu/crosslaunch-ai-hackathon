@@ -1,11 +1,16 @@
 import { zipSync } from "fflate";
-import type { AssetVersion, UploadedAsset } from "../../../../lib/domain";
+import type { AssetVersion, Channel, UploadedAsset } from "../../../../lib/domain";
 import { buildExportFiles, type ExportMaterial } from "../../../../lib/export-package";
 import { getAssetRecord } from "../../../../lib/asset-repository";
 import { getStoredObject } from "../../../../lib/storage";
 
 const safeFileName = (value: string) => value.replace(/[^a-zA-Z0-9._-]/g, "_") || "asset";
 const assetOrder: Record<string, number> = { main: 1, scene: 2, model: 3, comparison: 4, size: 5 };
+const knownChannels: Channel[] = ["amazon-us", "tiktok-us", "shopify-us"];
+
+function isChannel(value: string | null): value is Channel {
+  return value !== null && knownChannels.includes(value as Channel);
+}
 
 function isLoopback(request: Request) {
   const hostname = new URL(request.url).hostname.toLowerCase();
@@ -27,20 +32,26 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     return Response.json({ error: "项目数据库暂不可用。" }, { status: 503 });
   }
   if (!workspace) return Response.json({ error: "项目不存在。" }, { status: 404 });
-  const hasCompletedCheck = workspace.tasks.some((task) => task.type === "compliance" && task.status === "completed");
-  if (!workspace.truth.confirmedAt || !hasCompletedCheck || workspace.listings.some((listing) => !listing.title.trim())) {
-    return Response.json({ error: "请先确认商品信息、生成全部渠道内容并完成一次检查，才能导出。" }, { status: 409 });
+  const requestedChannel = new URL(request.url).searchParams.get("channel");
+  if (!isChannel(requestedChannel) || !workspace.project.channels.includes(requestedChannel)) {
+    return Response.json({ error: "请先选择一个要导出的平台：Amazon US、TikTok Shop US 或 Shopify US。" }, { status: 400 });
   }
-  const blocking = workspace.findings.filter((finding) => finding.status === "open");
+  const channel = requestedChannel;
+  const hasCompletedCheck = workspace.tasks.some((task) => task.type === "compliance" && task.status === "completed" && task.channel === channel);
+  const listing = workspace.listings.find((item) => item.channel === channel);
+  const channelAssets = workspace.assets.filter((asset) => asset.channel === channel);
+  if (!workspace.truth.confirmedAt || !hasCompletedCheck || !listing?.title.trim()) {
+    return Response.json({ error: `请先完成 ${channel} 的内容生成和合规检查，才能导出该平台发布包。` }, { status: 409 });
+  }
+  const blocking = workspace.findings.filter((finding) => finding.status === "open" && finding.location?.channel === channel);
   if (blocking.length) return Response.json({ error: "存在未处理的高风险项", blocking: blocking.map((item) => item.id) }, { status: 409 });
-  if (workspace.assets.some((asset) => asset.complianceStatus !== "passed")) {
-    return Response.json({ error: "仍有商品图片未通过合规复检，不能导出。" }, { status: 409 });
+  if (channelAssets.some((asset) => asset.complianceStatus !== "passed")) {
+    return Response.json({ error: `${channel} 仍有商品图片未通过合规复检，不能导出。` }, { status: 409 });
   }
 
   const materials: ExportMaterial[] = [];
   const seenAssetIds = new Set<string>();
-  const sourceAsset = workspace.truth.sourceAsset;
-  const exportAssets: Array<AssetVersion | UploadedAsset> = sourceAsset ? [sourceAsset, ...workspace.assets] : [...workspace.assets];
+  const exportAssets: Array<AssetVersion | UploadedAsset> = [...channelAssets];
   const publicImages = !isLoopback(request);
   const publicAssetUrl = (assetId: string) => publicImages ? new URL(`${publicBasePath()}/api/assets/${assetId}`, request.url).toString() : "";
   const channelPosition: Record<string, number> = {};
@@ -57,7 +68,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     channelPosition[positionKey] = (channelPosition[positionKey] ?? 0) + 1;
     const position = isChannelAsset ? channelPosition[positionKey] : 1;
     const prefix = isChannelAsset ? `${String(position).padStart(2, "0")}-${asset.kind}` : "source-product";
-    const folder = isChannelAsset ? `assets/${asset.channel}` : "assets/source";
+    const folder = isChannelAsset ? `${asset.channel}/图片` : "source";
     materials.push({
       asset,
       filename: record.filename,
@@ -72,8 +83,8 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     if (aChannel !== bChannel) return aChannel.localeCompare(bChannel);
     return (assetOrder[a.asset.kind] ?? 99) - (assetOrder[b.asset.kind] ?? 99);
   });
-  const files = buildExportFiles(workspace, materials);
+  const files = buildExportFiles(workspace, materials, [channel]);
   const archive = zipSync(files, { level: 6 });
   const archiveBuffer = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength) as ArrayBuffer;
-  return new Response(archiveBuffer, { headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="crosslaunch-${id}.zip"`, "Cache-Control": "no-store" } });
+  return new Response(archiveBuffer, { headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="crosslaunch-${channel}-${id}.zip"`, "Cache-Control": "no-store" } });
 }

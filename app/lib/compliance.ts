@@ -32,7 +32,17 @@ export function scanListing(listing: ChannelListing, truth: ProductTruthProfile)
     if (!rule.channels.includes(listing.channel) || !rule.pattern) continue;
     if (!rule.categories.includes("*") && !rule.categories.some((category) => truth.category.toLowerCase().includes(category))) continue;
     for (const segment of segments) {
-      const match = segment.text.match(new RegExp(rule.pattern, "i"));
+      // Keep rule scope aligned with its declared target. Without this guard,
+      // an SEO-title rule can incorrectly flag the product description too.
+      if (rule.target === "title" && segment.location.field !== "title") continue;
+      if (rule.target === "listing" && segment.location.kind !== "listing") continue;
+      if (rule.target === "detail" && segment.location.kind !== "detail") continue;
+      if (rule.id === "shopify-seo-length" && segment.location.field !== "metaTitle") continue;
+      // The all-caps rule intentionally needs case-sensitive matching. Using
+      // the global `i` flag turns every normal five-letter word into a false
+      // positive (for example, “Matte” and “Brushed”).
+      const flags = rule.id === "tiktok-all-caps" ? "" : "i";
+      const match = segment.text.match(new RegExp(rule.pattern, flags));
       if (!match) continue;
       findings.push({ id: `finding_${rule.id}_${listing.channel}_${segment.location.field}_${segment.location.index ?? 0}`, ruleId: rule.id, sourceId: rule.sourceId, severity: rule.severity, status: "open", target: `${listing.channel} · ${segment.label}`, excerpt: match[0], explanation: rule.message, suggestion: rule.suggestion, location: segment.location, version: 1 });
     }

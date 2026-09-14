@@ -6,7 +6,7 @@ export async function getDb() {
   const env = await getRuntimeEnv();
   if (!env.DB) {
     throw new Error(
-      "Cloudflare D1 binding `DB` is unavailable. Set the `d1` field in .openai/hosting.json to `DB` or let your control plane inject the real binding values before using the database."
+      "Cloudflare D1 binding `DB` is unavailable. Configure the binding in the Cloudflare deployment environment, or use the local Node storage adapter for a regular server deployment."
     );
   }
 

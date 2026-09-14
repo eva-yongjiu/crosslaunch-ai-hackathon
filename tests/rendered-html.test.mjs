@@ -18,7 +18,9 @@ test("server-renders the real-data workspace", async () => {
   assert.match(html, /上新无界/);
   assert.match(html, /商品事实/);
   assert.match(html, /真实数据工作台/);
-  assert.match(html, /AI 未配置|AI 状态检测中/);
+  assert.match(html, /界面与内容/);
+  assert.match(html, /global-language-control/);
+  assert.doesNotMatch(html, /本地数据库已连接|AI 已连接|AI 未配置|AI 状态检测中/);
   assert.doesNotMatch(html, /演示模式|便携榨汁杯|96%|codex-preview|Your site is taking shape/);
 });
 
@@ -59,7 +61,7 @@ test("supports bilingual AI output and precise compliance locations", async () =
   assert.match(workspace, /function normalizeListing/);
   assert.match(workspace, /raw\.text \?\? raw\.claim/);
   assert.match(workspace, /Array\.isArray\(value\)/);
-  assert.match(workflow, /const assetFindings = await reviewAssets\(workspace\)/);
+  assert.match(workflow, /const assetFindings = await reviewAssets\(workspace, reviewIds\)/);
 });
 
 test("keeps image roles and listing claims grounded in product facts", async () => {
@@ -95,7 +97,7 @@ test("supports AI compliance optimization and recheck", async () => {
   assert.match(workflow, /retryFailedAssets/);
   assert.match(workflow, /maxAutomaticAssetRetries/);
   assert.match(workflow, /replacementZh/);
-  assert.match(component, /一键优化全部并复查/);
+  assert.match(component, /优化该平台全部风险并复查/);
   assert.match(component, /AI 优化此项并复查/);
   assert.match(component, /risk-list/);
   assert.match(component, /risk-actions/);
@@ -129,12 +131,34 @@ test("exports a real ZIP delivery package", async () => {
   const source = `${route}\n${exporter}`;
   assert.match(route, /zipSync/);
   assert.match(route, /application\/zip/);
-  assert.match(source, /audit\/all-channels\.csv/);
-  assert.match(source, /product-page\.html/);
-  assert.match(source, /rule-sources\.json/);
-  assert.match(source, /01-listing-copy\.csv/);
-  assert.match(source, /02-image-order\.csv/);
+  assert.doesNotMatch(source, /audit\/all-channels\.csv/);
+  assert.match(source, /商品详情页\.html/);
+  assert.doesNotMatch(source, /rule-sources\.json/);
+  assert.match(source, /01-发布字段表\.csv/);
+  assert.match(source, /02-图片上传顺序\.csv/);
   assert.match(source, /products-import\.csv/);
-  assert.match(source, /START-HERE\.txt/);
-  assert.match(route, /完成一次检查/);
+  assert.match(source, /00-官方规则与注意事项\.txt/);
+  assert.match(source, /Amazon 官方上架要点/);
+  assert.match(source, /TikTok Shop 官方上架要点/);
+  assert.match(source, /Shopify 官方上架要点/);
+  assert.match(route, /searchParams\.get\("channel"\)/);
+  assert.match(route, /buildExportFiles\(workspace, materials, \[channel\]\)/);
+});
+
+test("keeps compliance checks, optimization and exports scoped to one platform", async () => {
+  const [domain, workflow, component, exporter] = await Promise.all([
+    readFile(new URL("../app/lib/domain.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/projects/[id]/workflow/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/experience-studio.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/export-package.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(domain, /channel\?: Channel/);
+  assert.match(workflow, /hasGeneratedContent\(workspace, body\.channel\)/);
+  assert.match(workflow, /runComplianceScan\(workspace, changedAssetIds, body\.channel\)/);
+  assert.match(workflow, /finding\.location\?\.channel === body\.channel/);
+  assert.match(component, /compliance-channel-tabs/);
+  assert.match(component, /只会检查当前选中的平台/);
+  assert.match(component, /下载该平台发布包/);
+  assert.match(component, /export\?channel=/);
+  assert.match(exporter, /channels: Channel\[\] = workspace\.project\.channels/);
 });

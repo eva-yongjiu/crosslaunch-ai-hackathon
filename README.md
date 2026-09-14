@@ -8,7 +8,7 @@
 2. 使用 Token Plan 视觉模型识别商品事实，人工确认后解锁创作。
 3. 按 Amazon US、TikTok Shop US、Shopify US 独立生成内容和五类商品图片。
 4. 用规则检查和视觉模型复检标题、卖点、图片主体及视觉宣称。
-5. 修正风险后重新检测，导出真实图片、Listing、详情页、规则来源和生成记录。
+5. 在合规中心选择一个平台，修正该平台的风险并重新检测；通过后下载只属于该平台的真实图片、Listing 和详情页发布包。
 
 产品不把未经确认的参数写入文案，也不会把没有专项规则包的品类标记为“完全合规”。合规功能是风险筛查工具，不替代平台审核、检测认证或法律意见。
 
@@ -88,6 +88,12 @@ Linux 使用：
 ```bash
 PORT=3000 CROSSLAUNCH_DATA_DIR=.data npm run start
 ```
+
+每次发布前都要在源码目录重新执行 `npm run build`，然后再启动或打包
+`dist/standalone/server.js`。构建完成后必须同时存在
+`dist/standalone/dist/client/_next/static/` 和 `dist/standalone/dist/server/`；只上传
+`server.js` 或 `public/` 会导致首页能打开但所有按钮无响应。仓库不依赖也不提交
+Sites 私有的 `.openai/` 配置；普通 Node/Docker 部署只读取服务端 `.env`。
 
 普通服务器没有 Cloudflare D1/R2 绑定时，项目数据保存到 `CROSSLAUNCH_DATA_DIR/projects.json`，图片保存到同目录下的 `assets/`。生产环境应使用持久化磁盘，并通过 HTTPS 反向代理暴露链接。Cloudflare 环境存在 D1/R2 绑定时，会自动优先使用云端存储。
 

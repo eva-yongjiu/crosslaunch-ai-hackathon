@@ -35,8 +35,12 @@ export function deleteProject(id: string) {
   return json<void>(appPath(`/api/projects/${id}`), { method: "DELETE" });
 }
 
-export function runWorkflow(id: string, action: "analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "optimize_finding" | "optimize_all" | "regenerate_asset", workspace: ProjectWorkspace, channel?: Channel, assetId?: string, findingId?: string) {
-  return json<{ workspace: ProjectWorkspace; storage: "d1" | "local" }>(appPath(`/api/projects/${id}/workflow`), { method: "POST", body: JSON.stringify({ action, workspace, channel, assetId, findingId }) });
+export function runWorkflow(id: string, action: "analyze" | "confirm_truth" | "generate" | "translate" | "scan" | "apply_fixes" | "optimize_finding" | "optimize_all" | "regenerate_asset", workspace: ProjectWorkspace, channel?: Channel, assetId?: string, findingId?: string, background = false) {
+  return json<{ workspace: ProjectWorkspace; storage: "d1" | "local"; task?: ProjectWorkspace["tasks"][number]; async?: boolean }>(appPath(`/api/projects/${id}/workflow`), { method: "POST", body: JSON.stringify({ action, workspace, channel, assetId, findingId, background }) });
+}
+
+export function getTask(projectId: string, taskId: string) {
+  return json<{ workspace: ProjectWorkspace; task: ProjectWorkspace["tasks"][number]; storage: "d1" | "local" }>(appPath(`/api/projects/${projectId}/tasks/${taskId}`));
 }
 
 export function saveWorkspace(workspace: ProjectWorkspace, reason: string) {
@@ -52,5 +56,18 @@ export async function uploadAsset(projectId: string, file: File, kind: UploadedA
 }
 
 export function getRuntimeStatus() {
-  return json<RuntimeStatus>(appPath("/api/status"));
+  return retryingJson<RuntimeStatus>(appPath("/api/status"), undefined, 3);
+}
+
+async function retryingJson<T>(input: RequestInfo | URL, init?: RequestInit, attempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await json<T>(input, init);
+    } catch (cause) {
+      lastError = cause;
+      if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("状态接口暂时无法连接。");
 }

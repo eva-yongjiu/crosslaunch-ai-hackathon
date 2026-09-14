@@ -70,6 +70,18 @@ export interface ClaimLink {
   keywords: string[];
 }
 
+export interface ListingField {
+  key: string;
+  label: string;
+  labelZh: string;
+  value: string;
+  valueZh?: string;
+  required: boolean;
+  status: "ready" | "missing" | "needs_review";
+  helpZh: string;
+  factIds: string[];
+}
+
 export interface ChannelListing {
   channel: Channel;
   strategy: "seo" | "brand" | "conversion";
@@ -85,6 +97,7 @@ export interface ChannelListing {
   metaTitleZh?: string;
   metaDescription?: string;
   metaDescriptionZh?: string;
+  platformFields?: ListingField[];
   claims: ClaimLink[];
   score: number;
 }
@@ -195,6 +208,18 @@ export interface GenerationTask {
   error?: string;
   startedAt?: string;
   completedAt?: string;
+  operation?: string;
+  /** 平台级任务范围；合规检查和修复不能跨平台混用。 */
+  channel?: Channel;
+  /** 风险项 ID，用于把后台任务进度显示在对应的风险记录下方。 */
+  targetFindingIds?: string[];
+  progress?: {
+    total: number;
+    completed: number;
+    succeeded: number;
+    failed: number;
+    current?: string;
+  };
 }
 
 export interface LaunchProject {

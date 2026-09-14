@@ -1,6 +1,6 @@
 import { strToU8 } from "fflate";
 import type { AssetVersion, Channel, ChannelListing, DetailModule, ProjectWorkspace, UploadedAsset } from "./domain";
-import { ruleSources } from "./rules";
+import { platformFieldRequirements } from "./rules";
 
 export interface ExportMaterial {
   asset: AssetVersion | UploadedAsset;
@@ -14,7 +14,6 @@ const channelNames: Record<Channel, string> = { "amazon-us": "Amazon US", "tikto
 const assetNames: Record<string, string> = { source: "商品原图", main: "白底主图", scene: "场景图", model: "模特图", comparison: "对比图", size: "尺寸图" };
 const assetOrder: Record<string, number> = { main: 1, scene: 2, model: 3, comparison: 4, size: 5, source: 99 };
 
-const jsonFile = (value: unknown) => strToU8(JSON.stringify(value, null, 2));
 const textFile = (value: string) => strToU8(value);
 const csvCell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
 const csvFile = (headers: string[], rows: Array<Array<unknown>>) => textFile(`\uFEFF${[headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n")}`);
@@ -43,11 +42,13 @@ function fieldRows(listing: ChannelListing, channel: Channel, workspace: Project
   if (listing.searchTerms !== undefined) rows.push(["Search terms", listing.searchTerms, listing.searchTermsZh ?? "", "搜索词 / Search terms", ""]);
   if (listing.metaTitle !== undefined) rows.push(["SEO title", listing.metaTitle, listing.metaTitleZh ?? "", "SEO 标题 / SEO title", ""]);
   if (listing.metaDescription !== undefined) rows.push(["SEO description", listing.metaDescription, listing.metaDescriptionZh ?? "", "SEO 描述 / SEO description", ""]);
+  const fields = (listing.platformFields ?? platformFieldRequirements[channel].map((item) => ({ ...item, value: "", valueZh: "", status: "missing" as const, factIds: [] })));
+  for (const field of fields) rows.push([field.label, field.value || "", field.valueZh ?? "", `${field.labelZh}：发布时填写`, field.status === "ready" ? "已准备" : `待填写：${field.helpZh}`]);
   return rows;
 }
 
-function detailRows(modules: DetailModule[]) {
-  return modules.map((module) => [module.type, module.title, module.titleZh ?? "", module.body, module.bodyZh ?? "", module.assetIds.join("|")]);
+function detailText(modules: DetailModule[]) {
+  return modules.map((module, index) => `模块 ${index + 1}｜${module.type}\n英文标题：${module.title}\n中文标题：${module.titleZh ?? ""}\n英文正文：\n${module.body}\n中文对照：\n${module.bodyZh ?? ""}\n`).join("\n------------------------------\n\n");
 }
 
 function imageRows(materials: ExportMaterial[], channel: Channel) {
@@ -56,23 +57,20 @@ function imageRows(materials: ExportMaterial[], channel: Channel) {
     index === 0 ? "Main image / 主图" : `Additional image ${index} / 附图 ${index}`,
     assetNames[material.asset.kind] ?? material.asset.kind,
     material.archivePath,
-    material.publicUrl,
-    material.asset.complianceStatus,
-    `${material.asset.consistencyScore}%`,
-    material.asset.retries,
-    index === 0 ? "主图位置；不要添加文字、徽章或水印" : "附图位置；保持商品真实外观",
+    material.publicUrl || "本地包内文件；上传到平台后使用",
+    index === 0 ? "主图位置；不要添加文字、徽章或水印" : "按顺序上传；确保展示的就是实际销售商品",
   ]);
 }
 
 function platformReadme(workspace: ProjectWorkspace, channel: Channel) {
-  const common = `# ${channelNames[channel]} 成品包\n\n商品：${workspace.project.productName}\n\n本文件夹是运营交付区。英文内容用于美国渠道发布，中文内容用于阅读、校对和修改。图片已经通过当前项目的合规复检后才会进入本包。\n\n`;
+  const common = `# ${channelNames[channel]} 发布包\n\n商品：${workspace.project.productName}\n\n英文内容可复制到美国站点；中文内容只用于校对。图片是当前项目通过复检的销售素材。\n\n## 重要注意事项\n\n本包只提供商品内容和素材，价格、库存、SKU、品牌授权、商品编码、仓库物流、税费和类目资质必须由商家按真实信息补齐。AI 检查是风险筛查，不替代平台审核、检测认证或法律意见。\n\n`;
   if (channel === "amazon-us") {
-    return `${common}## 你在 Amazon 需要填写什么\n\n1. 商品信息：标题、最多 5 条 Bullet Points、Product Description、Search Terms。\n2. 商品基础资料：Brand、SKU、价格、库存、GTIN/UPC/EAN、包装尺寸重量、配送和类目属性。\n3. 图片：1 张主图 + 附图；主图使用白底图，附图按图片顺序上传。\n\n## 本包怎么用\n\n- 打开 \`01-listing-copy.csv\`：把 English for publishing 列复制到 Seller Central 对应字段，Chinese reference 列用于校对。\n- 打开 \`02-image-order.csv\`：按 Position 上传 \`assets/amazon-us/\` 下的图片。\n- 打开 \`03-detail-modules.csv\`：用于 A+ 或详情页模块的人工排版。\n\n## 重要：批量上传不是通用 CSV\n\nAmazon 批量上传需要先在 Seller Central 按最终叶子类目下载官方 Inventory File Template，再把本包内容填入该官方模板。\`01-listing-copy.csv\` 是字段级交付表，不要把它直接当作 Amazon 类目模板上传。单品发布可以直接复制到 Add Products 表单。\n\n规则参考：[Amazon 商品图片要求](${workspace.sources.find((source) => source.id === "amazon-images")?.url ?? "https://sellercentral.amazon.com/"})\n`;
+    return `${common}## Amazon 官方上架要点\n\n- 商品详情页需要标题、最多 5 条 Bullet Points、商品描述、图片和商品详情；Offer 区域还要填写数量、价格、商品状态和配送方式。\n- 主图应是实际商品的专业图片，使用纯白背景；不得添加文字、Logo、水印、边框、色块或会造成误解的道具。\n- 商品内容必须准确描述实际销售商品，不能放卖家联系方式、价格、配送承诺、促销信息或未经证实的参数。\n\n## 使用顺序\n\n1. 打开 \`01-发布字段表.csv\`，复制英文列到 Seller Central 的对应字段，中文列用于校对。\n2. 打开 \`02-图片上传顺序.csv\`，按位置上传 \`图片/\` 文件夹中的图片。\n3. 详情页/A+ 内容参考 \`03-详情页文案.txt\`。\n4. 批量上传必须先在 Seller Central 按最终叶子类目下载 Amazon 官方 Inventory File Template，再把本包字段填入，不要直接上传自制表格。\n\n官方规则来源：\n- Product Image Requirements：${workspace.sources.find((source) => source.id === "amazon-images")?.url ?? "https://sellercentral.amazon.com/help/hub/reference/G1881"}\n- Product Detail Page Rules：${workspace.sources.find((source) => source.id === "amazon-detail")?.url ?? "https://sellercentral.amazon.com/help/hub/reference/G200390640"}\n- How to create Amazon product listings：${workspace.sources.find((source) => source.id === "amazon-listing")?.url ?? "https://sell.amazon.com/blog/amazon-product-listings"}\n`;
   }
   if (channel === "tiktok-us") {
-    return `${common}## 你在 TikTok Shop 需要填写什么\n\n1. Product name/title、Product description、正确的叶子类目和类目属性。\n2. Brand 授权（如适用）、SKU、价格、库存、GTIN、包裹重量尺寸、仓库和物流。\n3. 至少 5 张高分辨率商品图时优先使用本包前 5 张；每个商品最多 9 张方图，主图放第一张。\n\n## 本包怎么用\n\n- 单品发布：打开 \`01-listing-copy.csv\`，复制 English for publishing 列到 Seller Center 的字段。\n- 图片：按照 \`02-image-order.csv\` 的 Position 上传对应文件。\n- 详情内容：打开 \`03-detail-modules.csv\`，按模块放到商品描述中。\n\n## 重要：批量上传必须用官方类目 Excel\n\nTikTok Shop 的 Bulk Listing 模板按叶子类目生成，不能用任意自制 CSV 直接上传。请先在 Seller Center 下载当前类目官方 Excel，再把本包的标题、描述、图片 URL 和属性复制进去；不要新增、删除或改动官方模板的列。\n\n规则参考：[TikTok Shop Product Listing Policy](${workspace.sources.find((source) => source.id === "tiktok-listing")?.url ?? "https://seller-us.tiktok.com/university/"})\n`;
+    return `${common}## TikTok Shop 官方上架要点\n\n- 商品发布包括 Basic information、Product details、Sales information 和 Shipping；还可能要求认证或法定警示。\n- 标题应准确、简洁，包含品牌（如适用）、商品类型和识别信息；不能写折扣、库存、Best Seller、Buy Now 等促销或诱导内容。\n- 主图应展示商品正面、纯白背景；最多 9 张方图，图片至少 600×600，不能有文字、Logo、水印、边框或遮挡商品的图形。\n- 商品描述、图片、属性、规格和变体必须与顾客实际收到的商品一致；不能放网址、二维码或站外联系方式。\n\n## 使用顺序\n\n1. 打开 \`01-发布字段表.csv\`，将英文内容复制到 Seller Center。\n2. 打开 \`02-图片上传顺序.csv\`，按位置上传 \`图片/\` 文件夹中的 JPG/PNG。\n3. 商品描述和模块参考 \`03-详情页文案.txt\`。\n4. 批量发布必须使用 Seller Center 当前叶子类目生成的官方 Excel 模板，不要直接上传自制 CSV。\n\n官方规则来源：\n- Product Listing Policy：${workspace.sources.find((source) => source.id === "tiktok-listing")?.url ?? "https://seller-us.tiktok.com/university/essay?knowledge_id=3196690250417921"}\n- How to Add Products to Your Shop：${workspace.sources.find((source) => source.id === "tiktok-add-products")?.url ?? "https://seller-us.tiktok.com/university/essay?knowledge_id=6581713858676522"}\n- Product Detail Pages & Listing Quality Guidelines：${workspace.sources.find((source) => source.id === "tiktok-quality")?.url ?? "https://seller-us.tiktok.com/university/essay?knowledge_id=481891871868714"}\n`;
   }
-  return `${common}## 你在 Shopify 需要填写什么\n\n1. Product title、Description、Product type、Tags。\n2. Vendor、SKU、价格、库存、条码、税费和配送设置。\n3. 商品图片必须使用可公开访问的 HTTPS 图片 URL。\n\n## 本包怎么用\n\n- 打开 \`products-import.csv\`，在 Shopify Admin > Products > Import 上传。\n- 本文件默认 Published=FALSE / Status=draft，导入后请在后台预览，再补齐 Vendor、价格、库存和商品分类。\n- 如果 Image Src 为空，说明本次导出来自本地地址：先把 \`assets/shopify-us/\` 图片上传到可公开访问的图床或 Shopify Files，再把 URL 填入 \`products-import.csv\`；对应关系见 \`image-url-map.csv\`。\n- \`product-page.html\` 是可复制到主题/自定义页面的详情页 HTML，不是 Shopify 产品 CSV 的替代品。\n\n标准字段参考：[Shopify 产品 CSV 导入说明](https://help.shopify.com/en/manual/products/import-export/using-csv)\n`;
+  return `${common}## Shopify 官方上架要点\n\n- Shopify 产品 CSV 新建商品时 Title 是必填；Handle、Description、Vendor、Product category、Type、Tags、Published、Status、SKU、价格、库存、条码、配送和图片地址等字段按店铺实际情况填写。\n- CSV 第一行必须使用 Shopify 官方字段名，字段用逗号分隔，并保存为 UTF-8。\n- 图片地址必须是可用的图片 URL；本地下载包中的图片不能直接作为 Image Src，需先上传到 Shopify Files 或其他公开 HTTPS 地址。\n- SEO Title 建议不超过 70 个字符，SEO Description 建议不超过 320 个字符；导入后先保持 draft，在 Shopify 后台预览确认。\n\n## 使用顺序\n\n1. 先把 \`图片/\` 中的图片上传到公开 HTTPS 地址。\n2. 将图片地址填入 \`products-import.csv\` 的 Image Src，再到 Shopify Admin > Products > Import 导入。\n3. 若需自定义详情页，参考 \`商品详情页.html\`。\n\n官方规则来源：\n- Using CSV files to import and export products：${workspace.sources.find((source) => source.id === "shopify-csv")?.url ?? "https://help.shopify.com/en/manual/products/import-export/using-csv"}\n- Product media guidance：${workspace.sources.find((source) => source.id === "shopify-media")?.url ?? "https://help.shopify.com/en/manual/products/product-media"}\n- Adding keywords for SEO：${workspace.sources.find((source) => source.id === "shopify-seo")?.url ?? "https://help.shopify.com/en/manual/promoting-marketing/seo/adding-keywords"}\n`;
 }
 
 function shopifyBody(listing: ChannelListing, modules: DetailModule[], materials: ExportMaterial[]) {
@@ -89,69 +87,37 @@ function shopifyRows(workspace: ProjectWorkspace, materials: ExportMaterial[]): 
   const handle = slug(workspace.project.productName);
   const images = channelsMaterials("shopify-us", materials);
   const body = shopifyBody(listing, workspace.details["shopify-us"] ?? [], materials);
-  const headers = ["Handle", "Title", "Body (HTML)", "Vendor", "Product Category", "Type", "Tags", "Published", "Option1 Name", "Option1 Value", "Variant SKU", "Variant Inventory Tracker", "Variant Inventory Qty", "Variant Price", "Variant Requires Shipping", "Variant Taxable", "Variant Barcode", "Image Src", "Image Position", "Image Alt Text", "SEO Title", "SEO Description", "Status"];
-  const first = [handle, listing.title, body, "", "", workspace.truth.category, (listing.searchTerms ?? "").replaceAll(" ", ","), "FALSE", "Title", "Default", "", "", "", "", "TRUE", "TRUE", "", images[0]?.publicUrl ?? "", images[0] ? 1 : "", images[0] ? assetNames[images[0].asset.kind] : "", listing.metaTitle ?? listing.title, listing.metaDescription ?? listing.description, "draft"];
-  const extraImages = images.slice(1).map((material, index) => [handle, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", material.publicUrl, index + 2, assetNames[material.asset.kind], "", "", ""]);
+  const headers = ["URL handle", "Title", "Description", "Vendor", "Product category", "Type", "Tags", "Published on online store", "Status", "SKU", "Barcode", "Option1 name", "Option1 value", "Price", "Charge tax", "Inventory tracker", "Inventory quantity", "Requires shipping", "Fulfillment service", "Product image URL", "Image position", "Image alt text", "SEO title", "SEO description"];
+  const first = [handle, listing.title, body, "", workspace.truth.category, workspace.truth.category, (listing.searchTerms ?? "").replaceAll(" ", ","), "false", "draft", "", "", "Title", "Default Title", "", "true", "", "", "true", "manual", images[0]?.publicUrl ?? "", images[0] ? 1 : "", images[0] ? assetNames[images[0].asset.kind] : "", listing.metaTitle ?? listing.title, listing.metaDescription ?? listing.description];
+  const extraImages = images.slice(1).map((material, index) => [handle, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", material.publicUrl, index + 2, assetNames[material.asset.kind], "", ""]);
   return { headers, rows: [first, ...extraImages] };
 }
 
-function reportHtml(workspace: ProjectWorkspace) {
-  const sources = workspace.sources.length ? workspace.sources : ruleSources;
-  const findings = workspace.findings.map((finding) => `<tr><td>${htmlEscape(finding.status)}</td><td>${htmlEscape(finding.severity)}</td><td>${htmlEscape(finding.target)}</td><td>${htmlEscape(finding.excerpt)}</td><td>${htmlEscape(sources.find((source) => source.id === finding.sourceId)?.title ?? finding.sourceId)}</td></tr>`).join("");
-  const coverage = workspace.project.channels.map((channel) => `<li>${channelNames[channel]}：${workspace.project.coverage[channel]}</li>`).join("");
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>上新无界合规报告</title><style>body{font-family:Arial,"Microsoft YaHei",sans-serif;color:#163229;max-width:1000px;margin:40px auto;padding:0 20px}h1{font-size:28px}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #d8ddd4;padding:8px;text-align:left}th{background:#edf2e9}.note{padding:12px;background:#fff3d2}</style></head><body><h1>上新无界 · 合规筛查报告</h1><p>商品：${htmlEscape(workspace.project.productName)}；生成时间：${new Date().toISOString()}</p><p class="note">本报告是 AI 风险筛查结果，不替代平台审核、检测认证或法律意见。规则覆盖为 partial/unsupported 的品类仍需人工审核。</p><h2>渠道覆盖</h2><ul>${coverage}</ul><h2>发现明细</h2><table><thead><tr><th>状态</th><th>级别</th><th>位置</th><th>问题</th><th>规则来源</th></tr></thead><tbody>${findings || "<tr><td colspan=5>当前没有保存的风险发现；空记录不等同于完成法律审查。</td></tr>"}</tbody></table></body></html>`;
-}
-
-export function buildExportFiles(workspace: ProjectWorkspace, materials: ExportMaterial[]) {
-  const sources = workspace.sources.length ? workspace.sources : ruleSources;
+export function buildExportFiles(workspace: ProjectWorkspace, materials: ExportMaterial[], channels: Channel[] = workspace.project.channels) {
   const files: Record<string, Uint8Array> = {};
-  const put = (path: string, value: Uint8Array | string | unknown) => { files[path] = value instanceof Uint8Array ? value : typeof value === "string" ? textFile(value) : jsonFile(value); };
-  const platforms = {
-    "amazon-us": { delivery: "copy-ready", bulk: "official-category-template-required", title: "字段可复制；批量上传需官方类目模板" },
-    "tiktok-us": { delivery: "copy-ready", bulk: "official-leaf-category-template-required", title: "字段可复制；批量上传需官方类目 Excel" },
-    "shopify-us": { delivery: "csv-import", bulk: "shopify-product-csv", title: "标准产品 CSV；图片 URL 和店铺字段需确认" },
-  };
-  const manifest = {
-    product: workspace.project.productName,
-    category: workspace.truth.category,
-    channels: workspace.project.channels,
-    outputLanguage: workspace.outputLanguage ?? "bilingual",
-    exportedAt: new Date().toISOString(),
-    delivery: Object.fromEntries(workspace.project.channels.map((channel) => [channel, platforms[channel]])),
-    userStartHere: "README-START-HERE.txt",
-    auditFolders: ["audit/", "technical/"],
-    disclaimer: "AI risk screening does not replace platform review or legal advice.",
-  };
-  const allListingRows = workspace.listings.map((listing) => [listing.channel, listing.title, listing.titleZh ?? "", listing.bullets.join(" | "), (listing.bulletsZh ?? []).join(" | "), listing.description, listing.descriptionZh ?? "", listing.searchTerms ?? "", listing.searchTermsZh ?? "", listing.score]);
-  const readme = `# 上新无界 · 分平台交付包\n\n商品：${workspace.project.productName}\n导出时间：${manifest.exportedAt}\n\n## 先看这里\n\n1. 进入对应平台文件夹：\`amazon-us\`、\`tiktok-us\` 或 \`shopify-us\`。\n2. 先阅读该文件夹的 \`START-HERE.txt\`。\n3. 日常运营只需要看 \`01-listing-copy.csv\`、\`02-image-order.csv\` 和对应图片。\n4. \`audit/\` 与 \`technical/\` 只用于审计、追溯和开发排查，不要求运营人员打开。\n\n## 三个平台的交付方式\n\n- Amazon US：内容和图片可直接复制/上传；批量导入必须套 Amazon 按叶子类目下载的官方 Inventory File Template。\n- TikTok Shop US：内容和图片可直接复制/上传；批量导入必须套 Seller Center 当前叶子类目的官方 Excel。\n- Shopify US：\`shopify-us/products-import.csv\` 按 Shopify 产品 CSV 格式生成；本地导出时图片 URL 为空，需要先换成公开 HTTPS 地址。\n\n## 仍需人工补齐的经营字段\n\n价格、库存、SKU、条码、Vendor/Brand、包装重量尺寸、仓库物流、税费和平台账号权限不是 AI 可以凭空生成的字段。本包已把它们标为待补充，避免把猜测内容提交到平台。\n\n合规说明：本工具是风险筛查工具，不替代平台审核、检测认证或法律意见。\n`;
-  put("README-START-HERE.txt", readme);
-  put("manifest.json", manifest);
-  put("audit/compliance-report.html", reportHtml(workspace));
-  put("audit/compliance-report.json", { coverage: workspace.project.coverage, findings: workspace.findings, sources });
-  put("audit/rule-sources.json", sources);
-  put("audit/truth-profile.json", workspace.truth);
-  put("audit/generation-trace.json", workspace.tasks);
-  put("audit/all-channels.csv", csvFile(["channel", "title", "title_zh", "bullets", "bullets_zh", "description", "description_zh", "search_terms", "search_terms_zh", "score"], allListingRows));
-  put("technical/project.json", { project: workspace.project, exportedAt: manifest.exportedAt, assetCount: materials.length, findingCount: workspace.findings.length });
-  put("assets/asset-map.csv", csvFile(["channel", "kind", "role", "archive_file", "public_url", "compliance_status", "consistency_score", "retries"], materials.map((material) => ["channel" in material.asset ? channelNames[material.asset.channel] : "source", material.asset.kind, assetNames[material.asset.kind] ?? material.asset.kind, material.archivePath, material.publicUrl, "complianceStatus" in material.asset ? material.asset.complianceStatus : "source", "consistencyScore" in material.asset ? `${material.asset.consistencyScore}%` : "", "retries" in material.asset ? material.asset.retries : ""])));
+  const put = (path: string, value: Uint8Array | string) => { files[path] = value instanceof Uint8Array ? value : textFile(value); };
+  const channelLabel = channels.length === 1 ? channelNames[channels[0]] : "多个销售平台";
+  const readme = channels.length === 1
+    ? `上新无界｜${channelLabel} 发布包\n\n商品：${workspace.project.productName}\n\n本 ZIP 只包含 ${channelLabel} 的已检查内容、图片和发布说明。请不要把本包内容当作其他平台的发布包使用。\n\n重要：价格、库存、SKU、品牌授权、商品编码、仓库物流、税费和类目资质必须按真实信息填写。AI 检查是风险筛查，不替代官方平台审核、检测认证或法律意见。\n`
+    : `上新无界｜平台发布包\n\n商品：${workspace.project.productName}\n\n本 ZIP 按平台分成独立文件夹。每个文件夹只对应一个平台，运营人员请按平台分别使用。\n\n重要：价格、库存、SKU、品牌授权、商品编码、仓库物流、税费和类目资质必须按真实信息填写。AI 检查是风险筛查，不替代官方平台审核、检测认证或法律意见。\n`;
+  put("使用说明.txt", readme);
   for (const material of materials) put(material.archivePath, material.bytes);
 
-  for (const channel of workspace.project.channels) {
+  for (const channel of channels) {
     const listing = workspace.listings.find((item) => item.channel === channel);
     if (!listing) continue;
     const folder = channel;
     const rows = fieldRows(listing, channel, workspace);
     const images = imageRows(materials, channel);
-    const modules = detailRows(workspace.details[channel] ?? []);
-    put(`${folder}/START-HERE.txt`, platformReadme(workspace, channel));
-    put(`${folder}/01-listing-copy.csv`, csvFile(["field", "English for publishing", "Chinese reference", "where to use", "商品信息来源"], rows));
-    put(`${folder}/02-image-order.csv`, csvFile(["position", "upload role", "asset type", "archive file", "public URL", "compliance", "consistency", "retries", "operator note"], images));
-    put(`${folder}/03-detail-modules.csv`, csvFile(["module type", "English title", "Chinese title", "English body", "Chinese body", "asset IDs"], modules));
+    const modules = detailText(workspace.details[channel] ?? []);
+    put(`${folder}/00-官方规则与注意事项.txt`, platformReadme(workspace, channel));
+    put(`${folder}/01-发布字段表.csv`, csvFile(["字段", "English for publishing", "Chinese reference", "复制到哪里", "填写状态/注意事项"], rows));
+    put(`${folder}/02-图片上传顺序.csv`, csvFile(["位置", "上传角色", "图片类型", "包内文件", "公开图片地址", "使用说明"], images));
+    put(`${folder}/03-详情页文案.txt`, modules || "暂无详情页文案，请返回内容制作生成。");
     if (channel === "shopify-us") {
       const shopify = shopifyRows(workspace, materials);
       if (shopify) put("shopify-us/products-import.csv", csvFile(shopify.headers, shopify.rows));
-      put("shopify-us/product-page.html", `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${htmlEscape(listing.metaTitle ?? listing.title)}</title><meta name="description" content="${htmlEscape(listing.metaDescription ?? "")}"></head><body><main><h1>${htmlEscape(listing.title)}</h1>${shopifyBody(listing, workspace.details[channel] ?? [], materials)}</main></body></html>`);
-      put("shopify-us/image-url-map.csv", csvFile(["position", "asset type", "archive file", "Image Src", "status", "action"], channelsMaterials(channel, materials).map((material, index) => [index + 1, assetNames[material.asset.kind], material.archivePath, material.publicUrl, material.publicUrl ? "ready" : "local export: missing public URL", material.publicUrl ? "可直接保留" : "上传到公开 HTTPS 地址后填入 products-import.csv"])));
+      put("shopify-us/商品详情页.html", `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${htmlEscape(listing.metaTitle ?? listing.title)}</title><meta name="description" content="${htmlEscape(listing.metaDescription ?? "")}"></head><body><main><h1>${htmlEscape(listing.title)}</h1>${shopifyBody(listing, workspace.details[channel] ?? [], materials)}</main></body></html>`);
     }
   }
   return files;

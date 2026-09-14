@@ -26,7 +26,9 @@ export function assetRequirement(kind: AssetVersion["kind"], truth: ProductTruth
     const dimensions = dimensionFacts(truth);
     return dimensions.length
       ? { ready: true, factIds: dimensions.map((fact) => fact.id), reasonZh: "已具备可展示的尺寸/容量/重量事实。", reason: "Verified dimensional facts are available." }
-      : { ready: false, factIds: [], reasonZh: "缺少已确认的尺寸、容量或重量，不能生成真实尺寸图。", reason: "Verified dimensions, capacity or weight are required for a truthful size image." };
+      : facts.length
+        ? { ready: true, factIds: facts.slice(0, 4).map((fact) => fact.id), reasonZh: "暂时没有尺寸数据，将使用已确认的规格和特征制作信息图，不会虚构尺寸。", reason: "No dimensions are available; create a fact-based specification card without inventing measurements." }
+        : { ready: false, factIds: [], reasonZh: "至少确认一条商品信息，才能生成规格信息图。", reason: "At least one verified product fact is required for a specification image." };
   }
   if (kind === "comparison") {
     return facts.length >= 2
