@@ -170,7 +170,8 @@ async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel
         ? `Show measurement arrows and labels only for these exact dimensional facts: ${dimensions.map((fact) => `${fact.name}: ${fact.value}`).join("; ")}. Do not round, reinterpret or invent any number.`
         : "";
   const prompt = `Use the supplied product photo as the authoritative visual reference. Create ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts || "none"}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. ${channelGuardrail} ${roleConstruction} The delivered bitmap must be a clean, borderless sales image with no frame, card, collage margin, decorative panel, sticker, watermark, added logo or graphic edge. If any human-readable text is needed, use ${language} only; never mix languages. Never render UUIDs, internal fact IDs, raw identifiers, lorem ipsum, placeholder text or invented numbers. Never invent specifications, certifications, efficacy, performance numbers, extra product copies or packaging. Do not alter the product identity. ${correctionText}`;
-  const result = await generateImage(prompt, "2048*2048", sourceImage);
+  const negativePrompt = "extra product, extra accessory, extra cup, glass, straw, lid, package item, duplicate product, wrong logo, wrong label, invented text, invented number, border, frame, card, collage, watermark, sticker, badge, promotional graphic, cropped product, obstructed product, distorted product, blurry text";
+  const result = await generateImage(prompt, "2048*2048", sourceImage, negativePrompt);
   const remoteUrl = result.data?.[0]?.url;
   const encoded = result.data?.[0]?.b64_json;
   if (!remoteUrl && !encoded) throw new Error(`图片模型没有返回 ${channel}/${kind} 的结果。`);
@@ -388,7 +389,10 @@ async function optimizeAssetLocation(workspace: ProjectWorkspace, findings: Comp
   const requirement = assetRequirement(current.kind, workspace.truth);
   if (!requirement.ready) return null;
   if (!explicitRetry && current.retries >= maxAutomaticAssetRetries) return null;
-  const sourceImage = await sourceImageDataUrl(workspace);
+  // Edit the currently flagged asset so the model can remove the exact bad
+  // object or visual claim instead of generating a new scene from the raw
+  // source photo and accidentally reintroducing the same issue.
+  const sourceImage = await assetDataUrl(current.id, `${current.channel}/${current.kind} 当前图片`);
   const correction = findings.map((finding) => `${finding.excerpt}；${finding.explanation}；建议：${finding.suggestion}`).join("\n");
   const replacement = await generateSingleAsset(workspace, current.channel, current.kind, sourceImage, current.version + 1, current.id, current.retries + 1, correction);
   return { kind: "asset", assetId: current.id, replacement };
@@ -406,23 +410,44 @@ async function optimizeFindings(workspace: ProjectWorkspace, findings: Complianc
   let completed = 0;
   let succeeded = 0;
   let failed = 0;
-  const patches = await Promise.all(channelGroups.map(async (group) => {
-    try {
-      const patch = group[0].location?.kind === "asset" ? await optimizeAssetLocation(workspace, group, true) : await optimizeListingLocation(workspace, group);
-      completed += group.length; if (patch) succeeded += group.length; else failed += group.length;
-      await onProgress?.({ completed, succeeded, failed, current: group[0].target });
-      return patch;
-    } catch {
-      completed += group.length; failed += group.length;
-      await onProgress?.({ completed, succeeded, failed, current: group[0].target });
-      return null;
+  const patches: Array<OptimizationPatch | null> = Array.from({ length: channelGroups.length }, () => null);
+  let nextGroup = 0;
+  let reportChain = Promise.resolve();
+  const report = (progress: { completed: number; succeeded: number; failed: number; current?: string }) => {
+    reportChain = reportChain.then(async () => {
+      try {
+        // Serialize progress writes. This avoids competing local JSON renames
+        // while ensuring a progress-write failure never fails the model patch.
+        await onProgress?.(progress);
+      } catch (error) {
+        console.error("Unable to persist optimization progress", error);
+      }
+    });
+    return reportChain;
+  };
+  const optimizeWorker = async () => {
+    while (true) {
+      const groupIndex = nextGroup++;
+      if (groupIndex >= channelGroups.length) return;
+      const group = channelGroups[groupIndex];
+      try {
+        const patch = group[0].location?.kind === "asset" ? await optimizeAssetLocation(workspace, group, true) : await optimizeListingLocation(workspace, group);
+        patches[groupIndex] = patch;
+        completed += group.length; if (patch) succeeded += group.length; else failed += group.length;
+        await report({ completed, succeeded, failed, current: group[0].target });
+      } catch (error) {
+        completed += group.length; failed += group.length;
+        console.error("Unable to optimize finding group", group[0].target, error);
+        await report({ completed, succeeded, failed, current: group[0].target });
+      }
     }
-  }));
+  };
+  await Promise.all(Array.from({ length: Math.min(3, channelGroups.length) }, () => optimizeWorker()));
   const unlocatable = findings.filter((finding) => !finding.location);
   if (unlocatable.length) {
     completed += unlocatable.length;
     failed += unlocatable.length;
-    await onProgress?.({ completed, succeeded, failed, current: "旧版风险记录无法定位，请重新检查" });
+    await report({ completed, succeeded, failed, current: "旧版风险记录无法定位，请重新检查" });
   }
   const changedAssetIds = new Set<string>();
   for (const patch of patches) {

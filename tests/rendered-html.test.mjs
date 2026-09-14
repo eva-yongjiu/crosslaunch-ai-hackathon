@@ -85,11 +85,12 @@ test("keeps image roles and listing claims grounded in product facts", async () 
 });
 
 test("supports AI compliance optimization and recheck", async () => {
-  const [workflow, component, client, styles] = await Promise.all([
+  const [workflow, component, client, styles, router] = await Promise.all([
     readFile(new URL("../app/api/projects/[id]/workflow/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/experience-studio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/api-client.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/experience.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/model-router.ts", import.meta.url), "utf8"),
   ]);
   assert.match(workflow, /optimize_finding/);
   assert.match(workflow, /optimize_all/);
@@ -106,6 +107,10 @@ test("supports AI compliance optimization and recheck", async () => {
   assert.match(styles, /\.risk-list\{[^}]*overflow-y:auto/);
   assert.match(styles, /\.result-canvas\{[^}]*overflow:auto/);
   assert.match(client, /findingId/);
+  assert.match(workflow, /当前图片/);
+  assert.match(workflow, /negativePrompt/);
+  assert.match(workflow, /Math\.min\(3, channelGroups\.length\)/);
+  assert.match(router, /prompt_extend: false/);
 });
 
 test("does not silently fall back to fixture data", async () => {

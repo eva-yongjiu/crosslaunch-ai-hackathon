@@ -105,7 +105,7 @@ type MultimodalImageResponse = {
   request_id?: string;
 };
 
-export async function generateImage(prompt: string, size = "2048*2048", sourceImageDataUrl?: string) {
+export async function generateImage(prompt: string, size = "2048*2048", sourceImageDataUrl?: string, negativePrompt?: string) {
   const content: Array<{ image: string } | { text: string }> = [];
   if (sourceImageDataUrl) content.push({ image: sourceImageDataUrl });
   content.push({ text: prompt });
@@ -114,7 +114,7 @@ export async function generateImage(prompt: string, size = "2048*2048", sourceIm
     body: JSON.stringify({
       model: configuredValue("TOKEN_PLAN_IMAGE_MODEL", "MODEL_ROUTER_IMAGE_MODEL") ?? "qwen-image-2.0",
       input: { messages: [{ role: "user", content }] },
-      parameters: { n: 1, size, watermark: false, prompt_extend: true },
+      parameters: { n: 1, size, watermark: false, prompt_extend: false, ...(negativePrompt ? { negative_prompt: negativePrompt } : {}) },
     }),
   }, 180_000);
   const images = result.output?.choices?.flatMap((choice) => choice.message?.content ?? [])
