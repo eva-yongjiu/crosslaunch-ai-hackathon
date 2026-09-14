@@ -489,7 +489,16 @@ async function runComplianceScan(workspace: ProjectWorkspace, assetIds?: Set<str
     if (finding.location?.kind !== "asset") return false;
     return !targetAssetIds.has(finding.location.assetId ?? "");
   });
-  workspace.findings = [...preservedFindings, ...listingFindings, ...detailFindings, ...assetFindings];
+  const nextFindings = [...preservedFindings, ...listingFindings, ...detailFindings, ...assetFindings];
+  const seenFindingKeys = new Set<string>();
+  workspace.findings = nextFindings.filter((finding) => {
+    const key = finding.location
+      ? `${locationKey(finding.location)}|${finding.ruleId}|${outputText(finding.excerpt).trim().toLowerCase()}`
+      : `legacy:${finding.id}`;
+    if (seenFindingKeys.has(key)) return false;
+    seenFindingKeys.add(key);
+    return true;
+  });
   workspace.project.coverage = Object.fromEntries(workspace.project.channels.map((channel) => [channel, coverageFor(workspace.truth.category, channel)])) as ProjectWorkspace["project"]["coverage"];
   workspace.project.currentStep = "compliance";
   workspace.project.status = workspace.findings.length ? "needs_review" : "completed";

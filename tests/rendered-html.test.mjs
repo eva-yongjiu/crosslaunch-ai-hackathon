@@ -181,4 +181,6 @@ test("removes replaced image findings before adding recheck results", async () =
   assert.match(workflow, /complete affected-ID set for cleanup/);
   assert.match(workflow, /return !targetAssetIds\.has\(finding\.location\.assetId \?\? ""\)/);
   assert.match(workflow, /const reviewIds = new Set/);
+  assert.match(workflow, /const seenFindingKeys = new Set/);
+  assert.match(workflow, /locationKey\(finding\.location\).*finding\.ruleId/);
 });
