@@ -16,7 +16,7 @@ test("server-renders the real-data workspace", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /上新无界/);
-  assert.match(html, /商品事实/);
+  assert.match(html, /商品规格/);
   assert.match(html, /真实数据工作台/);
   assert.match(html, /界面与内容/);
   assert.match(html, /global-language-control/);
@@ -121,6 +121,19 @@ test("does not silently fall back to fixture data", async () => {
   const repository = await readFile(new URL("../app/lib/repository.ts", import.meta.url), "utf8");
   assert.match(repository, /ne\(projects\.id, "project_demo"\)/);
   assert.match(repository, /settingsJson/);
+});
+
+test("keeps product image upload retryable and tolerant of missing MIME metadata", async () => {
+  const [component, route] = await Promise.all([
+    readFile(new URL("../app/components/experience-studio.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/assets/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(component, /source-product-image/);
+  assert.match(component, /event\.target\.value = ""/);
+  assert.match(component, /onClick=\{chooseImage\}/);
+  assert.match(route, /request\.formData\(\)/);
+  assert.match(route, /imageTypeByExtension/);
+  assert.match(route, /图片上传数据读取失败/);
 });
 
 test("exports a real ZIP delivery package", async () => {
