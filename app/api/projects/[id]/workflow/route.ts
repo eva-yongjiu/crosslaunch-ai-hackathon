@@ -1,7 +1,7 @@
 import { getAssetRecord, saveAssetRecord } from "../../../../lib/asset-repository";
 import { assetKindForModule, assetKinds, assetPurpose, assetRequirement, dimensionFacts } from "../../../../lib/asset-policy";
 import { coverageFor, scanDetail, scanListing } from "../../../../lib/compliance";
-import { assertModelRouterConfigured, chatJson, generateImage, modelMode, visionJson } from "../../../../lib/model-router";
+import { assertModelRouterConfigured, chatJson, generateImage, imageModelName, modelMode, visionJson } from "../../../../lib/model-router";
 import { ruleSources } from "../../../../lib/rules";
 import { getStoredObject, putStoredObject } from "../../../../lib/storage";
 import type { AssetVersion, Channel, ChannelListing, ComplianceFinding, ComplianceLocation, DetailModule, GenerationTask, ProductFact, ProjectWorkspace } from "../../../../lib/domain";
@@ -78,6 +78,22 @@ async function sourceImageDataUrl(workspace: ProjectWorkspace) {
   return assetDataUrl(source.id, "商品原图");
 }
 
+async function createCleanReferenceAsset(workspace: ProjectWorkspace, channel: Channel, kind: AssetVersion["kind"], current: AssetVersion): Promise<AssetVersion> {
+  const source = workspace.truth.sourceAsset;
+  if (!source) throw new Error("请先上传商品原图。");
+  const record = await getAssetRecord(source.id);
+  if (!record) throw new Error("商品原图记录不存在，请重新上传。");
+  const object = await getStoredObject(record.objectKey);
+  if (!object) throw new Error("商品原图文件不存在，请重新上传。");
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  const id = crypto.randomUUID();
+  const filename = `${channel}-${kind}-clean-reference-v${current.version + 1}.${record.contentType.includes("png") ? "png" : "jpg"}`;
+  const objectKey = `projects/${workspace.project.id}/generated/${id}-${filename}`;
+  await putStoredObject(objectKey, bytes, record.contentType);
+  await saveAssetRecord({ id, projectId: workspace.project.id, objectKey, filename, contentType: record.contentType, size: bytes.byteLength, kind, createdAt: new Date().toISOString() });
+  return { id, kind, channel, url: `/api/assets/${id}`, version: current.version + 1, consistencyScore: 0, complianceStatus: "pending", retries: current.retries + 1, generationModel: "source-reference-clean", sourceStrategy: "source-reference", purpose: assetPurpose[kind].nameZh, factIds: assetRequirement(kind, workspace.truth).factIds, qualityNotes: ["已回退为用户上传的干净原图，避免 AI 图片文字错误。"], replacedFromId: current.id };
+}
+
 function makeTask(id: string, action: Action, queued = false, channel?: Channel): GenerationTask {
   return {
     id: crypto.randomUUID(), projectId: id,
@@ -142,9 +158,9 @@ const assetPrompts: Record<AssetVersion["kind"], string> = {
   comparison: "a clean secondary feature image: show the exact product together with at least two clearly separated, fact-grounded detail views of that same product",
   size: "a clean product specification image using only confirmed facts; show exact measurements only when dimensional facts are supplied",
 };
-const maxAutomaticAssetRetries = 2;
+const maxAutomaticAssetRetries = 3;
 
-async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel, kind: AssetVersion["kind"], sourceImage: string, version: number, replacedFromId?: string, retries = 0, correction?: string): Promise<AssetVersion> {
+async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel, kind: AssetVersion["kind"], sourceImage: string, version: number, replacedFromId?: string, retries = 0, correction?: string, sourceStrategy: AssetVersion["sourceStrategy"] = "source-reference"): Promise<AssetVersion> {
   const requirement = assetRequirement(kind, workspace.truth);
   if (!requirement.ready) throw new Error(`${assetPurpose[kind].nameZh}暂不能生成：${requirement.reasonZh}`);
   const verified = workspace.truth.attributes.filter((fact) => fact.status === "verified");
@@ -165,7 +181,7 @@ async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel
         ? "This is a secondary image, so measurement arrows and labels are allowed only for the supplied verified dimensional facts. Never estimate or invent a measurement."
     : "This is a secondary product image. It is not a main image: a lifestyle background, a human and clearly separate context props are allowed when appropriate for this asset role. Do not add promotional text, watermarks or logos, and never present a context prop as included in the package.";
   const roleConstruction = kind === "comparison"
-    ? "Show the exact same product plus at least two visually distinct close-up/detail views of confirmed features. A second product or invented competitor is forbidden. Text labels are optional; if used, use only exact verified fact names and values."
+    ? "Show the exact same product plus at least two visually distinct close-up/detail views of confirmed features. A second product or invented competitor is forbidden. Do not add labels, captions, arrows, numbers or any overlay text: the platform listing and detail page carry the verified copy."
     : kind === "size" && !dimensions.length
       ? "There are no verified dimensional facts. Do not draw rulers, measurement arrows, numeric dimensions or made-up sizes. Create a clean specification/features image with the product and clearly separated views of confirmed features. Do not add text rather than risk incorrect text."
       : kind === "size"
@@ -198,7 +214,7 @@ async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel
   const objectKey = `projects/${workspace.project.id}/generated/${id}-${filename}`;
   await putStoredObject(objectKey, bytes, contentType);
   await saveAssetRecord({ id, projectId: workspace.project.id, objectKey, filename, contentType, size: bytes.byteLength, kind, createdAt: new Date().toISOString() });
-  return { id, kind, channel, url: `/api/assets/${id}`, version, consistencyScore: 0, complianceStatus: "pending", retries, purpose: assetPurpose[kind].nameZh, factIds: requirement.factIds, qualityNotes: [], replacedFromId };
+  return { id, kind, channel, url: `/api/assets/${id}`, version, consistencyScore: 0, complianceStatus: "pending", retries, generationModel: imageModelName(), sourceStrategy, purpose: assetPurpose[kind].nameZh, factIds: requirement.factIds, qualityNotes: [], replacedFromId };
 }
 
 async function generateAssets(workspace: ProjectWorkspace, channels: Channel[], sourceImage: string): Promise<AssetVersion[]> {
@@ -239,7 +255,7 @@ async function reviewSingleAsset(workspace: ProjectWorkspace, asset: AssetVersio
     const hasDimensions = dimensionFacts(workspace.truth).length > 0;
     const officialSource = ruleSources.find((source) => source.platform === asset.channel);
     const review = await visionJson<VisualReviewResult>(
-      "You review ecommerce product images against supplied verified facts and the requested asset role. Return strict JSON. Do not infer hidden specifications. Mark passed false when the product identity is altered, an object is presented as an included accessory, or the image contains misleading claims. A comparison image needs at least two fact-grounded feature callouts or clearly separated feature views. A size image with supplied dimensions needs visible measurement arrows/labels for those exact dimensions. IMPORTANT: when no dimensional facts are supplied, a size asset is a fact-based specification/features image, not a measurement image; a clean product/features image without rulers or numbers is valid and must not be failed for missing measurements. Still fail any invented number, wrong label, typo, unrelated prop, product mismatch or misleading text. A main image must be a clean product-only image with no frame or border. Return every human-readable finding in both English and Simplified Chinese.",
+      "You review ecommerce product images against supplied verified facts and the requested asset role. Return strict JSON. Do not infer hidden specifications. Mark passed false when the product identity is altered, an object is presented as an included accessory, or the image contains misleading claims. A comparison image may use clearly separated feature views, or be a clean text-free product-detail image when factual comparison copy is delivered in the product page; do not fail a clean text-free product image merely because it has no callouts. A size image with supplied physical dimensions needs visible measurement arrows/labels for those exact dimensions. IMPORTANT: when no dimensional facts are supplied, a size asset is a fact-based specification/features image, not a measurement image; a clean product/features image without rulers or numbers is valid and must not be failed for missing measurements. Still fail any invented number, wrong label, typo, unrelated prop, product mismatch or misleading text. A main image must be a clean product-only image with no frame or border. Return every human-readable finding in both English and Simplified Chinese.",
       `Return {passed,roleValid,roleIssue,roleIssueZh,consistencyScore,findings:[{excerpt,excerptZh,severity,explanation,explanationZh,suggestion,suggestionZh,bbox}]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Channel: ${asset.channel}. Asset kind: ${asset.kind}. Dimensional facts supplied: ${hasDimensions ? "yes; enforce exact supplied physical dimensions only" : "no; do not require measurement indicators or invent dimensions"}. Official channel rule to apply: ${officialSource ? `${officialSource.title}; ${officialSource.excerpt}; version ${officialSource.version}; ${officialSource.url}` : "No official channel snapshot is available; mark coverage as partial and do not claim full compliance."} IMPORTANT ROLE SCOPE: the pure-white/no-props/no-text main-image rule applies only when Asset kind is main. Scene, model, comparison and size are supplementary images: do not fail them merely for a non-white background, a model, a suitable lifestyle prop, or factual callout text. For those roles, flag only product mismatch, an object falsely presented as included, clearly legible contradictory text, unsupported claims, or role failure. Do not treat blurry or unreadable packaging texture as OCR evidence. Review exact product identity, role accuracy, visible text, extra objects, unsupported claims, and channel suitability.`,
       image,
     );
@@ -390,17 +406,32 @@ async function optimizeAssetLocation(workspace: ProjectWorkspace, findings: Comp
   if (!current) throw new Error("对应图片不存在，可能已被替换；请重新检测后再优化。" );
   const requirement = assetRequirement(current.kind, workspace.truth);
   if (!requirement.ready) return null;
-  if (current.retries >= maxAutomaticAssetRetries) {
+  const textRisk = findings.some((finding) => /(text|label|typo|garbled|invented|文字|标签|拼写|乱码)/i.test(`${finding.excerpt} ${finding.explanation} ${finding.excerptZh ?? ""} ${finding.explanationZh ?? ""}`));
+  if ((current.kind === "comparison" || current.kind === "size") && textRisk) {
+    if (current.generationModel === "source-reference-clean") {
+      throw new Error("该图片已回退为干净原图，但复检仍发现风险；请人工确认原图与商品规格是否一致。" );
+    }
+    const replacement = await createCleanReferenceAsset(workspace, current.channel, current.kind, current);
+    return { kind: "asset", assetId: current.id, replacement };
+  }
+  const preferredModel = imageModelName();
+  const alreadyTriedPreferredModel = current.generationModel === preferredModel;
+  // Feature and specification images often contain model-rendered overlay
+  // text. Re-editing that already-corrupted bitmap preserves the error. Give
+  // legacy/current-asset candidates one clean rebuild from the product source.
+  const needsCleanReferenceRetry = (current.kind === "comparison" || current.kind === "size") && current.sourceStrategy !== "source-reference";
+  if (current.retries >= maxAutomaticAssetRetries && alreadyTriedPreferredModel && !needsCleanReferenceRetry) {
     throw new Error(current.kind === "main"
-      ? "该白底主图已连续生成两次仍未通过。请上传只含实际销售商品、无道具的白底原图后重新生成，系统不会继续无效扣费。"
-      : "该图片已达到两次自动优化上限。请人工确认商品原图或替换图片后再继续。"
+      ? "该白底主图已使用当前图片模型连续优化仍未通过。请上传只含实际销售商品、无道具的白底原图后重新生成，系统不会继续无效扣费。"
+      : "该图片已使用当前图片模型达到自动优化上限。请人工确认商品原图或替换图片后再继续。"
     );
   }
-  // A main-image failure is most reliably repaired from the user-provided
-  // product reference: editing a bad generated main image tends to preserve
-  // the very props, arrows or garbled labels that were flagged. Secondary
-  // assets instead retain their current composition and receive a targeted edit.
-  const sourceImage = current.kind === "main"
+  // Main, comparison and specification assets are rebuilt from the clean
+  // source. Their purpose is factual product presentation, so preserving a
+  // prior candidate's props or garbled labels has no value. Lifestyle images
+  // retain their current composition for targeted edits.
+  const useCleanSource = current.kind === "main" || current.kind === "comparison" || current.kind === "size";
+  const sourceImage = useCleanSource
     ? await sourceImageDataUrl(workspace)
     : await assetDataUrl(current.id, `${current.channel}/${current.kind} 当前图片`);
   const confirmedItems = workspace.truth.attributes
@@ -410,7 +441,7 @@ async function optimizeAssetLocation(workspace: ProjectWorkspace, findings: Comp
   const correction = current.kind === "main"
     ? `Show exactly the verified sale-unit products (${confirmedItems || "the confirmed products in the reference"}) on a pure white background and nothing else.`
     : "Keep only the exact verified product and its confirmed features. Remove every element that is not a verified sale-unit product, and do not add any readable label or callout text.";
-  const replacement = await generateSingleAsset(workspace, current.channel, current.kind, sourceImage, current.version + 1, current.id, current.retries + 1, correction);
+  const replacement = await generateSingleAsset(workspace, current.channel, current.kind, sourceImage, current.version + 1, current.id, current.retries + 1, correction, useCleanSource ? "source-reference" : "current-asset");
   return { kind: "asset", assetId: current.id, replacement };
 }
 

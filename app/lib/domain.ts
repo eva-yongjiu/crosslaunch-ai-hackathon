@@ -134,6 +134,10 @@ export interface AssetVersion {
   consistencyScore: number;
   complianceStatus: "pending" | "passed" | "failed";
   retries: number;
+  /** 生成该候选图的模型；旧素材为空时可在模型升级后获得一次重新优化机会。 */
+  generationModel?: string;
+  /** 图像候选使用的视觉底图策略，用于决定升级修复是否应回到干净原图。 */
+  sourceStrategy?: "source-reference" | "current-asset";
   purpose?: string;
   factIds?: string[];
   qualityNotes?: string[];

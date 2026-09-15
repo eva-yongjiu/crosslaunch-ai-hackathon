@@ -58,6 +58,13 @@ function multimodalBaseUrl() {
   return process.env.TOKEN_PLAN_MULTIMODAL_BASE_URL ?? DEFAULT_MULTIMODAL_BASE_URL;
 }
 
+export function imageModelName() {
+  // The Pro model has materially stronger instruction following and text
+  // rendering for image editing. It is the safer default for publish-ready
+  // ecommerce assets; deployments can still override it through .env.
+  return configuredValue("TOKEN_PLAN_IMAGE_MODEL", "MODEL_ROUTER_IMAGE_MODEL") ?? "qwen-image-2.0-pro";
+}
+
 function parseJson<T>(content: string): T {
   try {
     return JSON.parse(content) as T;
@@ -112,7 +119,7 @@ export async function generateImage(prompt: string, size = "2048*2048", sourceIm
   const result = await request<MultimodalImageResponse>(multimodalBaseUrl(), "/services/aigc/multimodal-generation/generation", {
     method: "POST",
     body: JSON.stringify({
-      model: configuredValue("TOKEN_PLAN_IMAGE_MODEL", "MODEL_ROUTER_IMAGE_MODEL") ?? "qwen-image-2.0",
+      model: imageModelName(),
       input: { messages: [{ role: "user", content }] },
       parameters: { n: 1, size, watermark: false, prompt_extend: false, ...(negativePrompt ? { negative_prompt: negativePrompt } : {}) },
     }),
