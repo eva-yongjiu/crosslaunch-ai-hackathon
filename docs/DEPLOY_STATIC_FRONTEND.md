@@ -53,7 +53,7 @@ CROSSLAUNCH_PUBLIC_BASE_PATH=/crosslaunch
 启动后端容器（后端只监听本机 3000 端口）：
 
 ```bash
-docker load -i crosslaunch-ai-backend-*.tar
+docker load -i crosslaunch-ai-backend-20260915-v6.tar
 docker compose -f docker-compose.runtime.yml up -d
 docker compose -f docker-compose.runtime.yml ps
 curl -fsS http://127.0.0.1:3000/api/status

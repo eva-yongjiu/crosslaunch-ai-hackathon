@@ -23,7 +23,7 @@ CentOS 7.9 只负责运行容器，应用实际运行在镜像内部的 Node 22 
 本地上传：
 
 ```powershell
-scp "crosslaunch-ai-backend-20260912.zip" root@服务器IP:/opt/
+scp "crosslaunch-ai-backend-20260915-v6.zip" root@服务器IP:/opt/
 ```
 
 服务器执行：
@@ -31,7 +31,7 @@ scp "crosslaunch-ai-backend-20260912.zip" root@服务器IP:/opt/
 ```bash
 mkdir -p /opt/crosslaunch-ai
 cd /opt/crosslaunch-ai
-unzip -o /opt/crosslaunch-ai-backend-20260912.zip
+unzip -o /opt/crosslaunch-ai-backend-20260915-v6.zip
 ```
 
 解压后目录中应只有镜像压缩包、Compose 文件、配置模板和说明文件，不应有 `app/`、`tests/` 或源码目录。
@@ -40,14 +40,14 @@ unzip -o /opt/crosslaunch-ai-backend-20260912.zip
 
 ```bash
 cd /opt/crosslaunch-ai
-docker load -i crosslaunch-ai-backend-20260912.tar
+docker load -i crosslaunch-ai-backend-20260915-v6.tar
 docker images crosslaunch-ai
 ```
 
 应看到镜像标签：
 
 ```text
-crosslaunch-ai   finale-20260912-v4
+crosslaunch-ai   finale-20260915-v6
 ```
 
 ## 4. 填写服务器配置
@@ -159,7 +159,7 @@ docker compose -f docker-compose.runtime.yml logs --tail=300 crosslaunch
 
 ```bash
 docker compose -f docker-compose.runtime.yml down
-docker load -i crosslaunch-ai-backend-20260912.tar
+docker load -i crosslaunch-ai-backend-20260915-v6.tar
 docker compose -f docker-compose.runtime.yml up -d
 ```
 

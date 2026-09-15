@@ -1,7 +1,11 @@
 node_modules
 .git
 .openai
-.data
+.data*
+.tmp*
+.artifacts
+output
+hackathon-*
 .next
 .vinext
 .wrangler

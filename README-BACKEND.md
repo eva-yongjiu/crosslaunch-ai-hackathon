@@ -5,7 +5,7 @@
 ## 启动
 
 ```bash
-docker load -i crosslaunch-ai-backend-20260912.tar
+docker load -i crosslaunch-ai-backend-20260915-v6.tar
 cp .env.example .env
 vi .env
 docker compose -f docker-compose.runtime.yml up -d
