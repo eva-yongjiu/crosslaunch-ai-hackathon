@@ -30,6 +30,7 @@
 
 /* Keep review and creation controls within reach while long content scrolls. */
 .risk-focus{display:flex;flex-direction:column;min-height:0}
+.optimization-failure-summary{margin:14px 18px 0;padding:12px 14px;border:1px solid #e4bf8b;border-radius:10px;background:#fff7e9;color:#765121;font-size:9px;line-height:1.6}.optimization-failure-summary>b{display:block;font-size:10px}.optimization-failure-summary p{margin:6px 0 0}.optimization-failure-summary span{margin-right:7px;color:#a56b19;font-weight:700}
 .risk-focus>.risk-header{align-items:center;gap:12px}
 .risk-header>div:first-child{display:flex;align-items:center;gap:9px;min-width:72px}
 .risk-header>div:first-child span{font-size:9px;font-weight:700;color:var(--ink)}

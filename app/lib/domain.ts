@@ -220,6 +220,8 @@ export interface GenerationTask {
     failed: number;
     current?: string;
   };
+  /** 任务内某个可定位风险无法自动修改时，保留原因供界面明确展示。 */
+  failureReasons?: Array<{ target: string; message: string }>;
 }
 
 export interface LaunchProject {

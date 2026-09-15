@@ -10,7 +10,10 @@ export const assetPurpose: Record<AssetVersion["kind"], { name: string; nameZh: 
   size: { name: "Size & specification image", nameZh: "尺寸 / 规格图", description: "只展示已确认的尺寸、容量或重量数据。" },
 };
 
-const dimensionPattern = /(dimension|height|width|depth|length|diameter|capacity|volume|weight|size|尺寸|高度|宽度|深度|长度|直径|容量|体积|重量)/i;
+// Only physical, drawable measurements belong on arrows. Capacity and weight
+// are valid product specifications, but rendering an arrow labelled "100ml"
+// is both misleading and a frequent source of image-model hallucinations.
+const dimensionPattern = /(dimension|height|width|depth|length|diameter|尺寸|高度|宽度|深度|长度|直径)/i;
 
 export function verifiedFacts(truth: ProductTruthProfile) {
   return truth.attributes.filter((fact) => fact.status === "verified");

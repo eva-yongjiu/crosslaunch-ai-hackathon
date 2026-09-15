@@ -61,7 +61,7 @@ test("supports bilingual AI output and precise compliance locations", async () =
   assert.match(workspace, /function normalizeListing/);
   assert.match(workspace, /raw\.text \?\? raw\.claim/);
   assert.match(workspace, /Array\.isArray\(value\)/);
-  assert.match(workflow, /const assetFindings = await reviewAssets\(workspace, reviewIds\)/);
+  assert.match(workflow, /const assetFindings = await reviewAssets\(workspace, targetAssetIds\)/);
 });
 
 test("keeps image roles and listing claims grounded in product facts", async () => {
@@ -109,7 +109,8 @@ test("supports AI compliance optimization and recheck", async () => {
   assert.match(client, /findingId/);
   assert.match(workflow, /当前图片/);
   assert.match(workflow, /negativePrompt/);
-  assert.match(workflow, /Math\.min\(3, channelGroups\.length\)/);
+  assert.match(workflow, /failureReasons/);
+  assert.match(workflow, /Array\.from\(\{ length: 1 \}/);
   assert.match(router, /prompt_extend: false/);
 });
 
@@ -172,7 +173,7 @@ test("keeps compliance checks, optimization and exports scoped to one platform",
   ]);
   assert.match(domain, /channel\?: Channel/);
   assert.match(workflow, /hasGeneratedContent\(workspace, body\.channel\)/);
-  assert.match(workflow, /runComplianceScan\(workspace, changedAssetIds, body\.channel\)/);
+  assert.match(workflow, /runComplianceScan\(workspace, optimization\.changedAssetIds, body\.channel\)/);
   assert.match(workflow, /finding\.location\?\.channel === body\.channel/);
   assert.match(component, /compliance-channel-tabs/);
   assert.match(component, /只会检查当前选中的平台/);
@@ -181,11 +182,11 @@ test("keeps compliance checks, optimization and exports scoped to one platform",
   assert.match(exporter, /channels: Channel\[\] = workspace\.project\.channels/);
 });
 
-test("removes replaced image findings before adding recheck results", async () => {
+test("rebuilds a platform report from current images before adding recheck results", async () => {
   const workflow = await readFile(new URL("../app/api/projects/[id]/workflow/route.ts", import.meta.url), "utf8");
-  assert.match(workflow, /complete affected-ID set for cleanup/);
-  assert.match(workflow, /return !targetAssetIds\.has\(finding\.location\.assetId \?\? ""\)/);
-  assert.match(workflow, /const reviewIds = new Set/);
+  assert.match(workflow, /Every scan rebuilds the selected platform/);
+  assert.match(workflow, /const targetAssetIds = new Set\(targetAssets\.map/);
+  assert.match(workflow, /return false;/);
   assert.match(workflow, /const seenFindingKeys = new Set/);
   assert.match(workflow, /locationKey\(finding\.location\).*finding\.ruleId/);
 });

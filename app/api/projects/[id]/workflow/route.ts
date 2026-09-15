@@ -150,18 +150,20 @@ async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel
   const verified = workspace.truth.attributes.filter((fact) => fact.status === "verified");
   const dimensions = dimensionFacts(workspace.truth);
   const facts = verified.map((fact) => `${fact.name}: ${fact.value}`).join("; ");
-  const correctionText = correction ? `A compliance review found this issue. Correct it in this new version: ${correction}. Do not preserve the flagged text, object, claim or visual error.` : "";
+  // For image models, repeating the name of a forbidden prop can make that
+  // prop more likely to appear. Corrections therefore state the required
+  // composition positively; the raw finding remains in the audit trail.
+  const correctionText = correction ? `A compliance review requires this exact corrected composition: ${correction}` : "";
+  const mainComposition = kind === "main"
+    ? "MAIN-IMAGE COMPOSITION CONTRACT: show only the confirmed sale-unit products visible in the reference. Leave generous empty pure-white space around them. Do not stage, decorate, duplicate or add any separate object."
+    : "";
   const channelGuardrail = kind === "main"
     ? "For the main image, use only the actual product on a pure white background. Do not add text, measurements, arrows, badges, borders, watermarks, logos, graphics or props."
     : kind === "comparison"
       ? "This is a secondary image, so concise callout text is allowed only for the supplied verified facts. Do not compare against an invented competitor or make a performance claim."
       : kind === "size"
         ? "This is a secondary image, so measurement arrows and labels are allowed only for the supplied verified dimensional facts. Never estimate or invent a measurement."
-    : "This is a secondary lifestyle image. Do not add promotional text, watermarks or logos. Context props are allowed only when clearly separate from the product and never presented as included in the package.";
-  // These are all US storefront channels. The operator may review the
-  // workspace in Chinese, but customer-facing image labels must stay in the
-  // channel's publishing language or the asset will fail localization review.
-  const language = "English";
+    : "This is a secondary product image. It is not a main image: a lifestyle background, a human and clearly separate context props are allowed when appropriate for this asset role. Do not add promotional text, watermarks or logos, and never present a context prop as included in the package.";
   const roleConstruction = kind === "comparison"
     ? "Show the exact same product plus at least two visually distinct close-up/detail views of confirmed features. A second product or invented competitor is forbidden. Text labels are optional; if used, use only exact verified fact names and values."
     : kind === "size" && !dimensions.length
@@ -169,7 +171,7 @@ async function generateSingleAsset(workspace: ProjectWorkspace, channel: Channel
       : kind === "size"
         ? `Show measurement arrows and labels only for these exact dimensional facts: ${dimensions.map((fact) => `${fact.name}: ${fact.value}`).join("; ")}. Do not round, reinterpret or invent any number.`
         : "";
-  const prompt = `Use the supplied product photo as the authoritative visual reference. Create ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts || "none"}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. ${channelGuardrail} ${roleConstruction} The delivered bitmap must be a clean, borderless sales image with no frame, card, collage margin, decorative panel, sticker, watermark, added logo or graphic edge. If any human-readable text is needed, use ${language} only; never mix languages. Never render UUIDs, internal fact IDs, raw identifiers, lorem ipsum, placeholder text or invented numbers. Never invent specifications, certifications, efficacy, performance numbers, extra product copies or packaging. Do not alter the product identity. ${correctionText}`;
+  const prompt = `Use the supplied product photo as the authoritative visual reference. Create ${assetPrompts[kind]}. Product: ${workspace.truth.productName}. Verified facts: ${facts || "none"}. Preserve the exact product color, shape, structure, logo, labels and included accessories. Target channel: ${channel}. ${channelGuardrail} ${mainComposition} ${roleConstruction} The delivered bitmap must be a clean, borderless sales image with no frame, card, collage margin, decorative panel, sticker, watermark, added logo or graphic edge. Do not generate any new readable text on packaging, labels or the image; preserve label areas only as they appear in the supplied reference. Never render UUIDs, internal fact IDs, raw identifiers, lorem ipsum, placeholder text or invented numbers. Never invent specifications, certifications, efficacy, performance numbers, extra product copies or packaging. Do not alter the product identity. ${correctionText}`;
   const negativePrompt = "extra product, extra accessory, extra cup, glass, straw, lid, package item, duplicate product, wrong logo, wrong label, invented text, invented number, border, frame, card, collage, watermark, sticker, badge, promotional graphic, cropped product, obstructed product, distorted product, blurry text";
   const result = await generateImage(prompt, "2048*2048", sourceImage, negativePrompt);
   const remoteUrl = result.data?.[0]?.url;
@@ -238,7 +240,7 @@ async function reviewSingleAsset(workspace: ProjectWorkspace, asset: AssetVersio
     const officialSource = ruleSources.find((source) => source.platform === asset.channel);
     const review = await visionJson<VisualReviewResult>(
       "You review ecommerce product images against supplied verified facts and the requested asset role. Return strict JSON. Do not infer hidden specifications. Mark passed false when the product identity is altered, an object is presented as an included accessory, or the image contains misleading claims. A comparison image needs at least two fact-grounded feature callouts or clearly separated feature views. A size image with supplied dimensions needs visible measurement arrows/labels for those exact dimensions. IMPORTANT: when no dimensional facts are supplied, a size asset is a fact-based specification/features image, not a measurement image; a clean product/features image without rulers or numbers is valid and must not be failed for missing measurements. Still fail any invented number, wrong label, typo, unrelated prop, product mismatch or misleading text. A main image must be a clean product-only image with no frame or border. Return every human-readable finding in both English and Simplified Chinese.",
-      `Return {passed,roleValid,roleIssue,roleIssueZh,consistencyScore,findings:[{excerpt,excerptZh,severity,explanation,explanationZh,suggestion,suggestionZh,bbox}]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Channel: ${asset.channel}. Asset kind: ${asset.kind}. Dimensional facts supplied: ${hasDimensions ? "yes; enforce exact supplied values only" : "no; do not require measurement indicators or invent dimensions"}. Official channel rule to apply: ${officialSource ? `${officialSource.title}; ${officialSource.excerpt}; version ${officialSource.version}; ${officialSource.url}` : "No official channel snapshot is available; mark coverage as partial and do not claim full compliance."} Review exact product identity, role accuracy, visible text, extra objects, unsupported claims, and channel suitability.`,
+      `Return {passed,roleValid,roleIssue,roleIssueZh,consistencyScore,findings:[{excerpt,excerptZh,severity,explanation,explanationZh,suggestion,suggestionZh,bbox}]}. Product: ${workspace.truth.productName}. Verified facts: ${facts}. Channel: ${asset.channel}. Asset kind: ${asset.kind}. Dimensional facts supplied: ${hasDimensions ? "yes; enforce exact supplied physical dimensions only" : "no; do not require measurement indicators or invent dimensions"}. Official channel rule to apply: ${officialSource ? `${officialSource.title}; ${officialSource.excerpt}; version ${officialSource.version}; ${officialSource.url}` : "No official channel snapshot is available; mark coverage as partial and do not claim full compliance."} IMPORTANT ROLE SCOPE: the pure-white/no-props/no-text main-image rule applies only when Asset kind is main. Scene, model, comparison and size are supplementary images: do not fail them merely for a non-white background, a model, a suitable lifestyle prop, or factual callout text. For those roles, flag only product mismatch, an object falsely presented as included, clearly legible contradictory text, unsupported claims, or role failure. Do not treat blurry or unreadable packaging texture as OCR evidence. Review exact product identity, role accuracy, visible text, extra objects, unsupported claims, and channel suitability.`,
       image,
     );
     const score = review.consistencyScore ?? (review.passed ? 1 : 0);
@@ -381,19 +383,33 @@ function applyOptimizationPatch(workspace: ProjectWorkspace, patch: Optimization
   workspace.details = { ...workspace.details, [location.channel]: modules.map((module, moduleIndex) => moduleIndex !== index ? module : location.field === "detailTitle" ? { ...module, title: replacement, titleZh: replacementZh } : { ...module, body: replacement, bodyZh: replacementZh }) };
 }
 
-async function optimizeAssetLocation(workspace: ProjectWorkspace, findings: ComplianceFinding[], explicitRetry = false): Promise<OptimizationPatch | null> {
+async function optimizeAssetLocation(workspace: ProjectWorkspace, findings: ComplianceFinding[]): Promise<OptimizationPatch | null> {
   const location = findings[0]?.location;
   if (!location || location.kind !== "asset" || !location.assetId) throw new Error("这条图片风险没有可编辑的素材定位，请先重新检测。" );
   const current = workspace.assets.find((asset) => asset.id === location.assetId);
   if (!current) throw new Error("对应图片不存在，可能已被替换；请重新检测后再优化。" );
   const requirement = assetRequirement(current.kind, workspace.truth);
   if (!requirement.ready) return null;
-  if (!explicitRetry && current.retries >= maxAutomaticAssetRetries) return null;
-  // Edit the currently flagged asset so the model can remove the exact bad
-  // object or visual claim instead of generating a new scene from the raw
-  // source photo and accidentally reintroducing the same issue.
-  const sourceImage = await assetDataUrl(current.id, `${current.channel}/${current.kind} 当前图片`);
-  const correction = findings.map((finding) => `${finding.excerpt}；${finding.explanation}；建议：${finding.suggestion}`).join("\n");
+  if (current.retries >= maxAutomaticAssetRetries) {
+    throw new Error(current.kind === "main"
+      ? "该白底主图已连续生成两次仍未通过。请上传只含实际销售商品、无道具的白底原图后重新生成，系统不会继续无效扣费。"
+      : "该图片已达到两次自动优化上限。请人工确认商品原图或替换图片后再继续。"
+    );
+  }
+  // A main-image failure is most reliably repaired from the user-provided
+  // product reference: editing a bad generated main image tends to preserve
+  // the very props, arrows or garbled labels that were flagged. Secondary
+  // assets instead retain their current composition and receive a targeted edit.
+  const sourceImage = current.kind === "main"
+    ? await sourceImageDataUrl(workspace)
+    : await assetDataUrl(current.id, `${current.channel}/${current.kind} 当前图片`);
+  const confirmedItems = workspace.truth.attributes
+    .filter((fact) => fact.status === "verified" && /(product type|产品类型|volume|容量)/i.test(`${fact.name} ${fact.nameZh ?? ""}`))
+    .map((fact) => `${fact.name}: ${fact.value}`)
+    .join("; ");
+  const correction = current.kind === "main"
+    ? `Show exactly the verified sale-unit products (${confirmedItems || "the confirmed products in the reference"}) on a pure white background and nothing else.`
+    : "Keep only the exact verified product and its confirmed features. Remove every element that is not a verified sale-unit product, and do not add any readable label or callout text.";
   const replacement = await generateSingleAsset(workspace, current.channel, current.kind, sourceImage, current.version + 1, current.id, current.retries + 1, correction);
   return { kind: "asset", assetId: current.id, replacement };
 }
@@ -411,6 +427,7 @@ async function optimizeFindings(workspace: ProjectWorkspace, findings: Complianc
   let succeeded = 0;
   let failed = 0;
   const patches: Array<OptimizationPatch | null> = Array.from({ length: channelGroups.length }, () => null);
+  const failures: Array<{ target: string; message: string }> = [];
   let nextGroup = 0;
   let reportChain = Promise.resolve();
   const report = (progress: { completed: number; succeeded: number; failed: number; current?: string }) => {
@@ -431,18 +448,28 @@ async function optimizeFindings(workspace: ProjectWorkspace, findings: Complianc
       if (groupIndex >= channelGroups.length) return;
       const group = channelGroups[groupIndex];
       try {
-        const patch = group[0].location?.kind === "asset" ? await optimizeAssetLocation(workspace, group, true) : await optimizeListingLocation(workspace, group);
+        const patch = group[0].location?.kind === "asset" ? await optimizeAssetLocation(workspace, group) : await optimizeListingLocation(workspace, group);
         patches[groupIndex] = patch;
-        completed += group.length; if (patch) succeeded += group.length; else failed += group.length;
+        completed += group.length;
+        if (patch) succeeded += group.length;
+        else {
+          failed += group.length;
+          failures.push({ target: group[0].target, message: "该图片缺少可自动修复的商品事实，或已无法生成安全替代版本。" });
+        }
         await report({ completed, succeeded, failed, current: group[0].target });
       } catch (error) {
         completed += group.length; failed += group.length;
+        const message = error instanceof Error ? error.message : "AI 未能返回可用的修改结果。";
+        failures.push({ target: group[0].target, message });
         console.error("Unable to optimize finding group", group[0].target, error);
         await report({ completed, succeeded, failed, current: group[0].target });
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(3, channelGroups.length) }, () => optimizeWorker()));
+  // Image editing providers are sensitive to bursts. Process a platform's
+  // grouped fixes in order so every result has a stable source and a usable
+  // failure report; independent tasks can still be submitted from the UI.
+  await Promise.all(Array.from({ length: 1 }, () => optimizeWorker()));
   const unlocatable = findings.filter((finding) => !finding.location);
   if (unlocatable.length) {
     completed += unlocatable.length;
@@ -460,13 +487,13 @@ async function optimizeFindings(workspace: ProjectWorkspace, findings: Complianc
       changedAssetIds.add(patch.replacement.id);
     }
   }
-  return changedAssetIds;
+  return { changedAssetIds, failures };
 }
 
 async function retryFailedAssets(workspace: ProjectWorkspace, changedAssetIds: Set<string>, channel?: Channel) {
   for (let attempt = 0; attempt < maxAutomaticAssetRetries; attempt += 1) {
     const groups = new Map<string, ComplianceFinding[]>();
-    for (const finding of workspace.findings.filter((item) => item.status === "open" && item.location?.kind === "asset" && (!channel || item.location.channel === channel))) {
+    for (const finding of workspace.findings.filter((item) => item.status === "open" && item.location?.kind === "asset" && changedAssetIds.has(item.location.assetId ?? "") && (!channel || item.location.channel === channel))) {
       const key = locationKey(finding.location!);
       groups.set(key, [...(groups.get(key) ?? []), finding]);
     }
@@ -475,9 +502,10 @@ async function retryFailedAssets(workspace: ProjectWorkspace, changedAssetIds: S
     // A retry is a new candidate that must replace the old candidate before
     // the next review. The previous implementation generated the file but
     // discarded its returned patch, so every retry reviewed the same bad file.
-    const patches = await Promise.all(retryableGroups.map(async (group) => {
-      try { return await optimizeAssetLocation(workspace, group, true); } catch { return null; }
-    }));
+    const patches: Array<OptimizationPatch | null> = [];
+    for (const group of retryableGroups) {
+      try { patches.push(await optimizeAssetLocation(workspace, group)); } catch { patches.push(null); }
+    }
     for (const patch of patches) {
       if (!patch) continue;
       applyOptimizationPatch(workspace, patch);
@@ -498,21 +526,20 @@ async function runComplianceScan(workspace: ProjectWorkspace, assetIds?: Set<str
   // the old finding points to the old asset ID while the new review points to
   // the replacement ID. Filtering only IDs that still exist would preserve
   // the old finding and make the risk count grow after every optimization.
-  const targetAssetIds = assetIds ?? new Set(targetAssets.filter((asset) => asset.complianceStatus !== "passed").map((asset) => asset.id));
-  const reviewIds = new Set([...targetAssetIds].filter((assetId) => targetAssets.some((asset) => asset.id === assetId)));
+  const targetAssetIds = new Set(targetAssets.map((asset) => asset.id));
   const listingFindings = workspace.listings.filter((listing) => targetChannels.includes(listing.channel)).flatMap((listing) => scanListing(listing, workspace.truth));
   const detailFindings = targetChannels.flatMap((targetChannel) => scanDetail(targetChannel, workspace.details[targetChannel] ?? [], workspace.truth));
-  const assetFindings = await reviewAssets(workspace, reviewIds);
-  // Keep findings from other channels intact. Findings for the selected channel
-  // are rebuilt from the current listing/detail/image versions only.
+  const assetFindings = await reviewAssets(workspace, targetAssetIds);
+  // Every scan rebuilds the selected platform from its current assets and copy.
+  // Retaining findings for prior, replaced asset IDs made risk totals grow on
+  // each optimize/recheck cycle and disconnected the report from the UI.
   const preservedFindings = workspace.findings.filter((finding) => {
     // A legacy finding has no reliable platform scope. Once a platform-scoped
     // scan is run, discard that legacy record instead of showing or exporting
     // it as if it belonged to the selected platform.
     if (channel && !finding.location) return false;
     if (channel && finding.location?.channel !== channel) return true;
-    if (finding.location?.kind !== "asset") return false;
-    return !targetAssetIds.has(finding.location.assetId ?? "");
+    return false;
   });
   const nextFindings = [...preservedFindings, ...listingFindings, ...detailFindings, ...assetFindings];
   const seenFindingKeys = new Set<string>();
@@ -548,15 +575,15 @@ async function runBackgroundOptimization(projectId: string, workspace: ProjectWo
     task.progress = { total, completed: 0, succeeded: 0, failed: 0 };
     await persist(workspace, `后台优化已开始：${action}`);
     updateBackgroundTask(task, workspace);
-    const changedAssetIds = await optimizeFindings(workspace, targets, async (progress) => {
+    const optimization = await optimizeFindings(workspace, targets, async (progress) => {
       task.progress = { total, ...progress };
       task.outputSummary = `正在处理 ${progress.completed}/${total} 项：${progress.current ?? "风险内容"}`;
       workspace.tasks = workspace.tasks.map((item) => item.id === task.id ? task : item);
       await persist(workspace, `后台优化进度：${progress.completed}/${total}`);
       updateBackgroundTask(task, workspace);
     });
-    await runComplianceScan(workspace, changedAssetIds, channel);
-    await retryFailedAssets(workspace, changedAssetIds, channel);
+    await runComplianceScan(workspace, optimization.changedAssetIds, channel);
+    await retryFailedAssets(workspace, optimization.changedAssetIds, channel);
     workspace = normalizeWorkspace(workspace);
     workspace.sources = ruleSources;
     updateBackgroundTask(task, workspace);
@@ -564,9 +591,9 @@ async function runBackgroundOptimization(projectId: string, workspace: ProjectWo
     const processed = task.progress?.succeeded ?? 0;
     const failed = task.progress?.failed ?? 0;
     const summary = remaining
-      ? `已提交 ${processed} 项并完成复检，仍有 ${remaining} 项风险需要处理${failed ? `；${failed} 项未能自动修改` : ""}。`
+      ? `已尝试修改 ${processed} 项并完成复检，仍有 ${remaining} 项风险需要处理${failed ? `；${failed} 项未能自动修改` : ""}。`
       : "全部风险已处理并完成复检。";
-    Object.assign(task, { status: "completed", outputSummary: summary, completedAt: new Date().toISOString(), progress: { total, completed: total, succeeded: processed, failed } });
+    Object.assign(task, { status: "completed", outputSummary: summary, completedAt: new Date().toISOString(), progress: { total, completed: total, succeeded: processed, failed }, failureReasons: optimization.failures.slice(0, 5) });
     workspace.tasks = workspace.tasks.map((item) => item.id === task.id ? task : item);
     workspace.project.updatedAt = new Date().toISOString();
     await persist(workspace, `后台优化完成：${action}`);
@@ -715,9 +742,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         : workspace.findings.filter((finding) => finding.status === "open" && (!body.channel || finding.location?.channel === body.channel));
       if (!targets.length) throw new Error(action === "optimize_finding" ? "找不到待优化的风险记录，请先重新检测。" : "当前没有待优化的风险记录。" );
       if (action === "optimize_finding" && !targets[0].location) throw new Error("旧版检测记录无法精确优化，请先重新运行规则检测。" );
-       const changedAssetIds = await optimizeFindings(workspace, targets);
-       await runComplianceScan(workspace, changedAssetIds, body.channel);
-       await retryFailedAssets(workspace, changedAssetIds, body.channel);
+       const optimization = await optimizeFindings(workspace, targets);
+       await runComplianceScan(workspace, optimization.changedAssetIds, body.channel);
+       await retryFailedAssets(workspace, optimization.changedAssetIds, body.channel);
     } else {
       removeUnsupportedClaims(workspace, body.channel);
       await runComplianceScan(workspace, undefined, body.channel);
