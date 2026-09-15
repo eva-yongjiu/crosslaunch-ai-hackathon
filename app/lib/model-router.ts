@@ -40,9 +40,13 @@ async function request<T>(base: string, path: string, init: RequestInit, timeout
       });
       if (response.ok) return response.json() as Promise<T>;
       const body = await response.text();
+      if (response.status === 429 && /insufficient_quota|quota has been exhausted/i.test(body)) {
+        throw new Error("Token Plan 套餐额度已用尽。请在百炼 Token Plan 中补充额度或更换仍有额度的 API Key 后重试。");
+      }
       lastError = `Token Plan ${response.status}: ${body.slice(0, 300)}`;
       if (![408, 409, 425, 429].includes(response.status) && response.status < 500) break;
     } catch (error) {
+      if (error instanceof Error && /套餐额度已用尽/.test(error.message)) throw error;
       lastError = error instanceof Error ? error.message : lastError;
     }
     if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));

@@ -36,6 +36,7 @@ test("keeps Token Plan credentials server-side", async () => {
   assert.match(envExample, /token-plan\.cn-beijing\.maas\.aliyuncs\.com\/compatible-mode\/v1/);
   assert.match(adapter, /qwen3\.7-plus/);
   assert.match(adapter, /multimodal-generation\/generation/);
+  assert.match(adapter, /套餐额度已用尽/);
   assert.doesNotMatch(adapter, /dashscope\.aliyuncs\.com|\/images\/generations/);
 });
 

@@ -305,6 +305,10 @@ async function reviewAssets(workspace: ProjectWorkspace, assetIds?: Set<string>)
         results[index] = await reviewSingleAsset(workspace, assets[index], facts);
       } catch (error) {
         const asset = assets[index];
+        // Provider quota is an operational failure, not a product risk. Let
+        // the workflow return a clear actionable error instead of creating a
+        // misleading high-risk compliance finding for every image.
+        if (error instanceof Error && /套餐额度已用尽/.test(error.message)) throw error;
         const sourceId = asset.channel === "amazon-us" ? "amazon-images" : asset.channel === "tiktok-us" ? "tiktok-listing" : "shopify-media";
         const message = error instanceof Error ? error.message : "图片检查服务暂时不可用。";
         asset.complianceStatus = "failed";
